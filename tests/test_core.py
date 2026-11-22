@@ -5,7 +5,7 @@ sys.modules["db"] = types.SimpleNamespace(db=None)
 import sources, analyze, card, config, bot
 
 HTML = """<html><head><link rel="alternate" type="application/rss+xml" href="/rss.xml"></head><body>
-<nav><a href="/x">خانه</a></nav>
+<nav><a href="/x">خانه</a><a href="/think">اندیشمندان و اندیشکده ها</a><a href="/it">فناوری اطلاعات و ارتباطات</a></nav>
 <a href="/news/1">اعلام ضوابط جدید ثبت قراردادهای اجاره در سامانه کدرهگیری</a>
 <a href="https://other.com/n">لینک بیرونی که نباید بیاید و طولانی است</a>
 <a href="/news/2">تمدید مهلت ثبت‌نام طرح ملی مسکن تا پایان ماه جاری</a>
@@ -18,6 +18,14 @@ class T(unittest.TestCase):
         items, feeds = sources.extract_links(HTML, "https://www.ssaa.ir")
         self.assertEqual(len(items), 2)                       # بدون تکراری و بدون لینک بیرونی/منو
         self.assertEqual(feeds, ["https://www.ssaa.ir/rss.xml"])
+
+    def test_menu_links_skipped(self):
+        items, _ = sources.extract_links(HTML, "https://www.ssaa.ir")
+        self.assertFalse(any("اندیشمندان" in i["title"] or "فناوری" in i["title"] for i in items))
+
+    def test_config_relay_flags(self):
+        self.assertTrue(all(s["relay"] for s in config.SOURCES if s["key"] in ("mrud", "ssaa", "tax")))
+        self.assertFalse([s for s in config.SOURCES if s["key"] == "mehr"][0]["relay"])
 
     def test_text_skips_footer(self):
         t = sources.extract_text(HTML)
