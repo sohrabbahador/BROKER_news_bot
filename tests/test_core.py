@@ -48,6 +48,11 @@ class T(unittest.TestCase):
         s = analyze.parse_sections("تیتر: الف ب\nخلاصه: جمله اول. جمله دوم.\nبرای مردم یعنی: مستأجران بدانند.")
         self.assertEqual((s["headline"], s["meaning"]), ("الف ب", "مستأجران بدانند."))
 
+    def test_importance(self):
+        s = analyze.parse_sections("تیتر: الف\nخلاصه: ب.\nبرای مردم یعنی: ج.\nاهمیت: ۵")
+        self.assertEqual((s["importance"], s["meaning"]), (5, "ج."))
+        self.assertEqual(analyze.parse_sections("تیتر: الف\nخلاصه: ب.")["importance"], 3)   # پیش‌فرض
+
     def test_caption_labels(self):
         d = {"headline": "ت", "summary": "خ", "meaning": "م", "source": "س", "official": False, "url": "https://x.ir"}
         c = bot.build_caption(d)
