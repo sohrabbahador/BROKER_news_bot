@@ -8,6 +8,7 @@ MONGODB_URI = _e("MONGODB_URI")
 GEMINI_API_KEY = _e("GEMINI_API_KEY")
 GEMINI_MODEL = _e("GEMINI_MODEL", "gemini-3.8-flash")
 POLL_SECONDS = max(60, int(_e("POLL_SECONDS", "180")))
+MIN_SCORE = int(_e("MIN_SCORE", "3"))      # خبرهای کم‌اهمیت‌تر از این به مدیر نمی‌رسند (۱ تا ۵)
 RELAY_SECRET = _e("RELAY_SECRET")
 SIGNATURE = _e("CHANNEL_SIGNATURE", "🏠 بروکر املاک")
 
@@ -18,6 +19,10 @@ SOURCES = [
     {"key": "tax", "name": "سازمان امور مالیاتی", "url": _e("NEWS_URL_TAX", "https://www.intamedia.ir"), "official": True},
     {"key": "mehr", "name": "خبرگزاری مهر (بخش مسکن)", "url": _e("NEWS_URL_MEHR", "https://www.mehrnews.com/service/markets/Housing"), "official": False},
 ]
+
+for _i, _x in enumerate([p for p in _e("EXTRA_SOURCES").split(";") if "|" in p], 1):
+    _n, _u = _x.split("|", 1)                      # EXTRA_SOURCES="نام|آدرس;نام|آدرس"
+    SOURCES.append({"key": f"x{_i}", "name": _n.strip(), "url": _u.strip(), "official": False})
 
 _RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax").split(",") if x.strip()]
 for _s in SOURCES:

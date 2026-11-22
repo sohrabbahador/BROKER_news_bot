@@ -21,21 +21,25 @@ def _next_id():
 def _card(d):
     return card.make_card(d["headline"], d["summary"], d["source"], d["official"], "بروکر املاک")
 
-async def make_draft(title, body, source_name, official, url=""):
+async def make_draft(title, body, source_name, official, url="", min_score=0):
     a = await analyze.analyze(title, body)
+    if a.get("importance", 3) < min_score:        # کم‌اهمیت: ثبت می‌شود ولی مزاحم مدیر نمی‌شود
+        db.skipped.insert_one({"title": title[:120], "source": source_name, "score": a.get("importance"), "t": time.time()})
+        return False
     i = _next_id()
     d = {"_id": i, "headline": a["headline"] or title[:80], "summary": a["summary"], "meaning": a["meaning"],
          "source": source_name, "official": official, "url": url, "status": "draft", "created": time.time(),
-         "custom_caption": None}
+         "custom_caption": None, "importance": a.get("importance", 3)}
     db.drafts.insert_one(d)
     await show_draft(d, a.get("suspect_numbers"))
+    return True
 
 async def show_draft(d, suspect=None):
     cap = d.get("custom_caption") or build_caption(d)
     warn = ""
     if suspect:
         warn = f"\n\n⚠️ این عددها در متن مبدأ پیدا نشد؛ قبل از انتشار حتماً بررسی کنید: {', '.join(suspect)}"
-    await bale.send_photo(config.ADMIN_ID, _card(d), f"📝 پیش‌نویس #{d['_id']}{warn}", None)
+    await bale.send_photo(config.ADMIN_ID, _card(d), f"📝 پیش‌نویس #{d['_id']} | ⭐ اهمیت {d.get('importance', 3)}/5{warn}", None)
     await bale.send_message(config.ADMIN_ID, cap + (warn if warn else ""), KB(d["_id"]))
 
 async def publish(d):
@@ -61,8 +65,8 @@ async def process_items(src, items, bodies=None, limit=5):
         if not body and bodies is None:
             try: body = await sources.article_text(it["url"])
             except Exception: body = ""
-        await make_draft(it["title"], body, src["name"], src["official"], it["url"])
-        created += 1
+        if await make_draft(it["title"], body, src["name"], src["official"], it["url"], min_score=config.MIN_SCORE):
+            created += 1
         if created >= limit:
             break
     return created
@@ -161,7 +165,7 @@ async def handle_message(m):
         for s in config.SOURCES:
             h = db.health.find_one({"_id": s["key"]}) or {}
             lines.append(f"{'✅' if not h.get('error') and h.get('ok_at') else '❌'} {s['name']}: {h.get('count', '—')} لینک" + (f" | خطا: {h['error'][:60]}" if h.get("error") else ""))
-        lines.append(f"پیش‌نویس‌های منتظر: {db.drafts.count_documents({'status': 'draft'})}")
+        lines.append(f"پیش‌نویس‌های منتظر: {db.drafts.count_documents({'status': 'draft'})} | خبرهای کم‌اهمیت‌شده (۷ روز): {db.skipped.count_documents({'t': {'$gt': time.time() - 7 * 86400}})}")
         await bale.send_message(config.ADMIN_ID, "\n".join(lines))
     elif text and not text.startswith("/"):
         st = db.state.find_one_and_delete({"_id": "edit"})

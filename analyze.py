@@ -14,8 +14,9 @@ def unsupported_numbers(source: str, output: str):
     return sorted(numbers(output) - numbers(source))
 
 SYSTEM = ("تو سردبیر کانال خبری املاک هستی. فقط از متن خبر استفاده کن. هیچ عدد، تاریخ، درصد یا نامی که در متن نیست ننویس. "
-          "فارسی روان و ساده بنویس. خروجی را دقیقاً با این سه بخش بده و چیز دیگری اضافه نکن:\n"
-          "تیتر: (حداکثر ۹ کلمه)\nخلاصه: (حداکثر ۳ جمله)\nبرای مردم یعنی: (۱ تا ۲ جمله برای خریدار، فروشنده یا مستأجر؛ اگر مطمئن نیستی بنویس «جزئیات بیشتر هنوز اعلام نشده»)")
+          "فارسی روان و ساده بنویس. خروجی را دقیقاً با این چهار بخش بده و چیز دیگری اضافه نکن:\n"
+          "تیتر: (حداکثر ۹ کلمه)\nخلاصه: (حداکثر ۳ جمله)\nبرای مردم یعنی: (۱ تا ۲ جمله برای خریدار، فروشنده یا مستأجر؛ اگر مطمئن نیستی بنویس «جزئیات بیشتر هنوز اعلام نشده»)\n"
+          "اهمیت: (فقط یک عدد ۱ تا ۵. ۵ = تغییر قانون، مالیات، وام یا هزینه که مستقیم روی خریدار، فروشنده یا مستأجر اثر دارد. ۳ = مفید برای مخاطب ملکی. ۱ = بی‌ربط، تشریفاتی یا تکراری)")
 
 LAST_ERROR = ""
 
@@ -49,13 +50,16 @@ def parse_sections(txt: str):
     def grab(label, nxt):
         m = re.search(rf"{label}\s*[:：]\s*(.+?)(?=\n\s*(?:{nxt})\s*[:：]|\Z)", txt, re.S)
         return m.group(1).strip() if m else ""
-    return {"headline": grab("تیتر", "خلاصه|برای مردم یعنی"),
-            "summary": grab("خلاصه", "برای مردم یعنی|تیتر"),
-            "meaning": grab("برای مردم یعنی", "تیتر|خلاصه")}
+    m = re.search(r"اهمیت\s*[:：]\s*([1-5۱-۵])", txt)
+    imp = int(norm(m.group(1))) if m else 3
+    return {"headline": grab("تیتر", "خلاصه|برای مردم یعنی|اهمیت"),
+            "summary": grab("خلاصه", "برای مردم یعنی|تیتر|اهمیت"),
+            "meaning": grab("برای مردم یعنی", "تیتر|خلاصه|اهمیت"),
+            "importance": imp}
 
 def fallback(title: str, body: str):
     sents = [s.strip() for s in re.split(r"(?<=[.!؟?])\s+", body) if len(s.strip()) > 20][:2]
-    return {"headline": title[:80], "summary": " ".join(sents) or title, "meaning": "جزئیات بیشتر هنوز اعلام نشده."}
+    return {"headline": title[:80], "summary": " ".join(sents) or title, "meaning": "جزئیات بیشتر هنوز اعلام نشده.", "importance": 3}
 
 async def analyze(title: str, body: str):
     src = f"{title}\n{body}"
@@ -63,5 +67,5 @@ async def analyze(title: str, body: str):
     data = parse_sections(out) if out else {}
     if not data.get("summary"):
         data = fallback(title, body)
-    data["suspect_numbers"] = unsupported_numbers(src, " ".join(data.values()))
+    data["suspect_numbers"] = unsupported_numbers(src, " ".join(str(v) for k, v in data.items() if k != "importance"))
     return data
