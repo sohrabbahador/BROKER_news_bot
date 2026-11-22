@@ -17,19 +17,32 @@ SYSTEM = ("تو سردبیر کانال خبری املاک هستی. فقط ا�
           "فارسی روان و ساده بنویس. خروجی را دقیقاً با این سه بخش بده و چیز دیگری اضافه نکن:\n"
           "تیتر: (حداکثر ۹ کلمه)\nخلاصه: (حداکثر ۳ جمله)\nبرای مردم یعنی: (۱ تا ۲ جمله برای خریدار، فروشنده یا مستأجر؛ اگر مطمئن نیستی بنویس «جزئیات بیشتر هنوز اعلام نشده»)")
 
+LAST_ERROR = ""
+
 async def gemini(prompt: str, system="", max_tokens=500):
+    global LAST_ERROR
+    LAST_ERROR = ""
     if not config.GEMINI_API_KEY:
+        LAST_ERROR = "متغیر GEMINI_API_KEY خالی است"
         return None
+    # مدل‌های جدید قبل از جواب «فکر» می‌کنند و از همین سقف مصرف می‌کنند؛ سقف کم = جواب خالی
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
+            "generationConfig": {"maxOutputTokens": max(max_tokens, 1500), "temperature": 0.2}}
     if system: body["systemInstruction"] = {"parts": [{"text": system}]}
     try:
         async with httpx.AsyncClient(timeout=45) as c:
             r = await c.post(f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent",
                              headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
-        if r.status_code != 200: return None
-        return "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"]).strip() or None
-    except Exception:
+        if r.status_code != 200:
+            LAST_ERROR = f"HTTP {r.status_code}: {r.text[:160]}"
+            return None
+        cand = (r.json().get("candidates") or [{}])[0]
+        text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", [])).strip()
+        if not text:
+            LAST_ERROR = f"جواب خالی (finishReason={cand.get('finishReason')})"
+        return text or None
+    except Exception as e:
+        LAST_ERROR = f"{type(e).__name__}: {str(e)[:120]}"
         return None
 
 def parse_sections(txt: str):

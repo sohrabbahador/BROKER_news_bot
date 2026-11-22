@@ -46,34 +46,49 @@ async def publish(d):
     return r
 
 # ---------- پایش منابع ----------
+async def process_items(src, items, bodies=None, limit=5):
+    """items جدید را فیلتر و پیش‌نویس می‌کند. bodies: متن آماده (از رله)؛ وگرنه از سایت گرفته می‌شود."""
+    first_run = db.seen.count_documents({"src": src["key"]}) == 0
+    created = 0
+    for it in items[:40]:
+        u = sources.uid(it["url"])
+        if db.seen.find_one({"_id": u}):
+            continue
+        db.seen.insert_one({"_id": u, "src": src["key"], "title": it["title"], "t": time.time()})
+        if first_run or not sources.is_relevant(it["title"]):
+            continue                         # اجرای اول فقط خط پایه است؛ خبرهای قدیمی ارسال نمی‌شود
+        body = (bodies or {}).get(it["url"]) or it.get("body") or ""
+        if not body and bodies is None:
+            try: body = await sources.article_text(it["url"])
+            except Exception: body = ""
+        await make_draft(it["title"], body, src["name"], src["official"], it["url"])
+        created += 1
+        if created >= limit:
+            break
+    return created
+
 async def poll_sources(force=False):
     if PAUSED and not force:
         return 0
     created = 0
     for src in config.SOURCES:
+        if src.get("relay"):
+            continue                          # این منبع‌ها از رله می‌آیند
         try:
             items = await sources.list_items(src)
         except Exception as e:
             db.health.update_one({"_id": src["key"]}, {"$set": {"error": str(e)[:200], "t": time.time()}}, upsert=True)
             continue
         db.health.update_one({"_id": src["key"]}, {"$set": {"error": None, "ok_at": time.time(), "count": len(items)}}, upsert=True)
-        first_run = db.seen.count_documents({"src": src["key"]}) == 0
-        for it in items[:40]:
-            u = sources.uid(it["url"])
-            if db.seen.find_one({"_id": u}):
-                continue
-            db.seen.insert_one({"_id": u, "src": src["key"], "title": it["title"], "t": time.time()})
-            if first_run or not sources.is_relevant(it["title"]):
-                continue                         # اجرای اول فقط خط پایه است؛ پیام‌های قدیمی ارسال نمی‌شود
-            try:
-                body = await sources.article_text(it["url"])
-            except Exception:
-                body = ""
-            await make_draft(it["title"], body, src["name"], src["official"], it["url"])
-            created += 1
-            if created >= 5:
-                return created                   # سقف پیش‌نویس در هر دور
+        created += await process_items(src, items)
     return created
+
+async def ingest_relay(key, items):
+    src = next((s for s in config.SOURCES if s["key"] == key), None)
+    if not src:
+        return -1
+    db.health.update_one({"_id": key}, {"$set": {"error": None, "ok_at": time.time(), "count": len(items), "via": "relay"}}, upsert=True)
+    return await process_items(src, items, bodies={})
 
 # ---------- تست دسترسی ----------
 async def diagnose():
@@ -81,14 +96,15 @@ async def diagnose():
     for src in config.SOURCES:
         try:
             r, t = await sources.fetch(src["url"])
-            items, feeds = sources.extract_links(r.text, src["url"])
-            lines.append(f"{'✅' if r.status_code == 200 else '⚠️'} {src['name']}: کد {r.status_code} | {t}s | {len(items)} لینک خبری | RSS: {'دارد' if feeds else 'ندارد'}")
-            for it in items[:2]:
+            items = await sources.list_items(src)
+            _, feeds = sources.extract_links(r.text, src["url"])
+            lines.append(f"{'✅' if r.status_code == 200 else '⚠️'} {src['name']}: کد {r.status_code} | {t}s | {len(items)} خبر | RSS: {'دارد' if feeds else 'ندارد'}")
+            for it in items[:3]:
                 lines.append(f"   • {it['title'][:70]}")
         except Exception as e:
-            lines.append(f"❌ {src['name']}: باز نشد ({type(e).__name__}) — احتمالاً آی‌پی خارجی مسدود است")
+            lines.append(f"❌ {src['name']}: باز نشد ({type(e).__name__}) — آی‌پی خارجی مسدود است؛ این منبع باید از «رله» بیاید")
     g = await analyze.gemini("بنویس: سلام", max_tokens=20)
-    lines.append("✅ هوش مصنوعی Gemini: پاسخ داد" if g else "❌ Gemini: پاسخ نداد (کلید یا دسترسی را بررسی کنید)")
+    lines.append("✅ هوش مصنوعی Gemini: پاسخ داد" if g else f"❌ Gemini: {analyze.LAST_ERROR or 'پاسخ نداد'}")
     try:
         db.command("ping"); lines.append("✅ دیتابیس: وصل است")
     except Exception as e:

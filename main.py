@@ -1,5 +1,5 @@
-import asyncio
-from fastapi import FastAPI
+import asyncio, hmac
+from fastapi import FastAPI, Request, HTTPException
 import config
 
 app = FastAPI(title="Broker News Bot")
@@ -12,6 +12,17 @@ import bot
 @app.get("/")
 def home():
     return {"status": "running", "paused": bot.PAUSED}
+
+@app.post("/relay")
+async def relay(request: Request):
+    """دریافت خبر از رله‌ی داخل ایران (برای سایت‌هایی که Render به آن‌ها دسترسی ندارد)."""
+    if not config.RELAY_SECRET or not hmac.compare_digest(request.headers.get("X-Relay-Secret", ""), config.RELAY_SECRET):
+        raise HTTPException(403)
+    data = await request.json()
+    n = await bot.ingest_relay(data.get("source", ""), data.get("items", []))
+    if n < 0:
+        raise HTTPException(400, "unknown source")
+    return {"drafts": n}
 
 @app.on_event("startup")
 async def startup():

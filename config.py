@@ -6,8 +6,9 @@ ADMIN_ID = int(_e("ADMIN_ID", "0") or 0)
 CHANNEL_ID = _e("CHANNEL_ID")
 MONGODB_URI = _e("MONGODB_URI")
 GEMINI_API_KEY = _e("GEMINI_API_KEY")
-GEMINI_MODEL = _e("GEMINI_MODEL", "gemini-2.5-flash-lite")
+GEMINI_MODEL = _e("GEMINI_MODEL", "gemini-3.8-flash")
 POLL_SECONDS = max(60, int(_e("POLL_SECONDS", "180")))
+RELAY_SECRET = _e("RELAY_SECRET")
 SIGNATURE = _e("CHANNEL_SIGNATURE", "🏠 بروکر املاک")
 
 # ردیف اول (رسمی) = 🟢 ؛ سیگنال رسانه‌ای = 🟡
@@ -17,6 +18,10 @@ SOURCES = [
     {"key": "tax", "name": "سازمان امور مالیاتی", "url": _e("NEWS_URL_TAX", "https://www.intamedia.ir"), "official": True},
     {"key": "mehr", "name": "خبرگزاری مهر (بخش مسکن)", "url": _e("NEWS_URL_MEHR", "https://www.mehrnews.com/service/markets/Housing"), "official": False},
 ]
+
+_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax").split(",") if x.strip()]
+for _s in SOURCES:
+    _s["relay"] = _s["key"] in _RELAY      # این منبع‌ها از رله‌ی داخل ایران می‌آیند، نه مستقیم از Render
 
 KEYWORDS = ["مسکن", "اجاره", "رهن", "مستأجر", "مستاجر", "املاک", "ملک", "مالیات", "سند", "کدرهگیری", "کد رهگیری",
             "وام", "معامله", "زمین", "شهرسازی", "ساخت", "خانه", "آپارتمان", "قرارداد", "اجاره‌بها", "اجاره بها",

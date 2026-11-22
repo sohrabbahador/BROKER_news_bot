@@ -3,7 +3,6 @@ import hashlib, re, time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
-import httpx
 import config
 
 UA = {"User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
@@ -26,6 +25,9 @@ class _Links(HTMLParser):
             t = re.sub(r"\s+", " ", "".join(self._buf)).strip()
             self.links.append((t, self._href)); self._href = None
 
+ARTICLE_URL = re.compile(r"\d{4,}|/news/|/fa/news|/content/|/node/|/post/")
+BAD_URL = re.compile(r"/(tag|tags|category|service|page|search|contact|about)(/|$)")
+
 def extract_links(html: str, base: str, min_len=22):
     p = _Links(); p.feed(html)
     host = urlparse(base).netloc.replace("www.", "")
@@ -34,7 +36,9 @@ def extract_links(html: str, base: str, min_len=22):
         url = urljoin(base, href.split("#")[0])
         if len(title) < min_len or not FA.search(title) or host not in urlparse(url).netloc:
             continue
-        if url in seen or url.rstrip("/") == base.rstrip("/"):
+        if url in seen or url.rstrip("/") == base.rstrip("/") or BAD_URL.search(url):
+            continue
+        if not (ARTICLE_URL.search(url) or len(title) >= 45):   # منوها و بخش‌های سایت حذف شوند
             continue
         seen.add(url); out.append({"title": title, "url": url})
     return out, [urljoin(base, f) for f in p.feeds]
@@ -85,6 +89,7 @@ def uid(url: str) -> str:
     return hashlib.sha1(url.encode()).hexdigest()[:16]
 
 async def fetch(url: str, timeout=20):
+    import httpx
     async with httpx.AsyncClient(timeout=timeout, headers=UA, follow_redirects=True, verify=False) as c:
         t = time.time(); r = await c.get(url)
         return r, round(time.time() - t, 1)
