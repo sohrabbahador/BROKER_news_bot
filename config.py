@@ -1,0 +1,27 @@
+import os
+def _e(k, d=""): return os.getenv(k, d).strip()
+
+BALE_TOKEN = _e("BALE_TOKEN")
+ADMIN_ID = int(_e("ADMIN_ID", "0") or 0)
+CHANNEL_ID = _e("CHANNEL_ID")
+MONGODB_URI = _e("MONGODB_URI")
+GEMINI_API_KEY = _e("GEMINI_API_KEY")
+GEMINI_MODEL = _e("GEMINI_MODEL", "gemini-2.5-flash-lite")
+POLL_SECONDS = max(60, int(_e("POLL_SECONDS", "180")))
+SIGNATURE = _e("CHANNEL_SIGNATURE", "🏠 بروکر املاک")
+
+# ردیف اول (رسمی) = 🟢 ؛ سیگنال رسانه‌ای = 🟡
+SOURCES = [
+    {"key": "mrud", "name": "وزارت راه و شهرسازی", "url": _e("NEWS_URL_MRUD", "https://www.mrud.ir"), "official": True},
+    {"key": "ssaa", "name": "سازمان ثبت اسناد و املاک کشور", "url": _e("NEWS_URL_SSAA", "https://www.ssaa.ir"), "official": True},
+    {"key": "tax", "name": "سازمان امور مالیاتی", "url": _e("NEWS_URL_TAX", "https://www.intamedia.ir"), "official": True},
+    {"key": "mehr", "name": "خبرگزاری مهر (بخش مسکن)", "url": _e("NEWS_URL_MEHR", "https://www.mehrnews.com/service/markets/Housing"), "official": False},
+]
+
+KEYWORDS = ["مسکن", "اجاره", "رهن", "مستأجر", "مستاجر", "املاک", "ملک", "مالیات", "سند", "کدرهگیری", "کد رهگیری",
+            "وام", "معامله", "زمین", "شهرسازی", "ساخت", "خانه", "آپارتمان", "قرارداد", "اجاره‌بها", "اجاره بها",
+            "نقل و انتقال", "نقل‌وانتقال", "بنگاه", "مشاور", "تسهیلات", "ودیعه"]
+REQUIRED_ENV = ["BALE_TOKEN", "ADMIN_ID", "CHANNEL_ID", "MONGODB_URI"]
+
+def missing_env():
+    return [k for k in REQUIRED_ENV if not _e(k) or (k == "ADMIN_ID" and ADMIN_ID == 0)]

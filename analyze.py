@@ -1,0 +1,54 @@
+"""تحلیل خبر با Gemini + کنترل عددها (هر عدد خروجی باید در متن مبدأ باشد)."""
+import re
+import httpx
+import config
+
+FA_D = "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"; EN_D = "01234567890123456789"
+def norm(s): return (s or "").translate(str.maketrans(FA_D, EN_D))
+
+def numbers(s):
+    s = norm(s).replace("٬", "").replace(",", "").replace("،", "")
+    return {n for n in re.findall(r"\d+(?:\.\d+)?", s) if len(n) >= 2}
+
+def unsupported_numbers(source: str, output: str):
+    return sorted(numbers(output) - numbers(source))
+
+SYSTEM = ("تو سردبیر کانال خبری املاک هستی. فقط از متن خبر استفاده کن. هیچ عدد، تاریخ، درصد یا نامی که در متن نیست ننویس. "
+          "فارسی روان و ساده بنویس. خروجی را دقیقاً با این سه بخش بده و چیز دیگری اضافه نکن:\n"
+          "تیتر: (حداکثر ۹ کلمه)\nخلاصه: (حداکثر ۳ جمله)\nبرای مردم یعنی: (۱ تا ۲ جمله برای خریدار، فروشنده یا مستأجر؛ اگر مطمئن نیستی بنویس «جزئیات بیشتر هنوز اعلام نشده»)")
+
+async def gemini(prompt: str, system="", max_tokens=500):
+    if not config.GEMINI_API_KEY:
+        return None
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2}}
+    if system: body["systemInstruction"] = {"parts": [{"text": system}]}
+    try:
+        async with httpx.AsyncClient(timeout=45) as c:
+            r = await c.post(f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent",
+                             headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+        if r.status_code != 200: return None
+        return "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"]).strip() or None
+    except Exception:
+        return None
+
+def parse_sections(txt: str):
+    def grab(label, nxt):
+        m = re.search(rf"{label}\s*[:：]\s*(.+?)(?=\n\s*(?:{nxt})\s*[:：]|\Z)", txt, re.S)
+        return m.group(1).strip() if m else ""
+    return {"headline": grab("تیتر", "خلاصه|برای مردم یعنی"),
+            "summary": grab("خلاصه", "برای مردم یعنی|تیتر"),
+            "meaning": grab("برای مردم یعنی", "تیتر|خلاصه")}
+
+def fallback(title: str, body: str):
+    sents = [s.strip() for s in re.split(r"(?<=[.!؟?])\s+", body) if len(s.strip()) > 20][:2]
+    return {"headline": title[:80], "summary": " ".join(sents) or title, "meaning": "جزئیات بیشتر هنوز اعلام نشده."}
+
+async def analyze(title: str, body: str):
+    src = f"{title}\n{body}"
+    out = await gemini(f"عنوان: {title}\n\nمتن خبر:\n{body or title}", SYSTEM)
+    data = parse_sections(out) if out else {}
+    if not data.get("summary"):
+        data = fallback(title, body)
+    data["suspect_numbers"] = unsupported_numbers(src, " ".join(data.values()))
+    return data
