@@ -358,6 +358,13 @@ async def ingest_relay(key, items):
 async def diagnose():
     lines = ["🔎 نتیجه‌ی تست دسترسی (از سرور Render):"]
     for src in config.SOURCES:
+        if src.get("relay"):
+            h = db.health.find_one({"_id": src["key"]}) or {}
+            if h.get("ok_at"):
+                lines.append(f"✅ {src['name']}: دریافت از رله | {h.get('count', 0)} خبر")
+            else:
+                lines.append(f"⏳ {src['name']}: مسیر دریافت از رله؛ هنوز نتیجه‌ای ثبت نشده")
+            continue
         try:
             r, t = await sources.fetch(src["url"])
             items = await sources.list_items(src)
@@ -366,7 +373,7 @@ async def diagnose():
             for it in items[:3]:
                 lines.append(f"   • {it['title'][:70]}")
         except Exception as e:
-            lines.append(f"❌ {src['name']}: باز نشد ({type(e).__name__}) — آی‌پی خارجی مسدود است؛ این منبع باید از «رله» بیاید")
+            lines.append(f"❌ {src['name']}: باز نشد ({type(e).__name__}) — در این نوبت از دریافت خبر رد شد")
     g = await analyze.gemini("بنویس: سلام", max_tokens=20)
     lines.append("✅ هوش مصنوعی Gemini: پاسخ داد" if g else f"❌ Gemini: {analyze.LAST_ERROR or 'پاسخ نداد'}")
     try:
@@ -533,7 +540,11 @@ async def _handle(m):
         try:
             await bale.send_message(config.ADMIN_ID, f"⏳ در حال ساخت {n} پیش‌نویس از تازه‌ترین خبرها (چند دقیقه طول می‌کشد)…")
             for src in [s for s in config.SOURCES if not s["relay"]]:
-                items = await sources.list_items(src)
+                try:
+                    items = await sources.list_items(src)
+                except Exception as e:
+                    print(f"latest source skipped: {src['key']}: {type(e).__name__}: {str(e)[:160]}")
+                    continue
                 for it in items:
                     if made >= n or tried >= 12: break
                     if not src.get("topic") and not sources.is_relevant(it["title"]): continue
@@ -560,7 +571,10 @@ async def _handle(m):
             lines.append("🕒 هنوز هیچ چرخه‌ی پایشی اجرا نشده")
         for s in config.SOURCES:
             h = db.health.find_one({"_id": s["key"]}) or {}
-            lines.append(f"{'✅' if not h.get('error') and h.get('ok_at') else '❌'} {s['name']}: {h.get('count', '—')} لینک" + (f" | خطا: {h['error'][:60]}" if h.get("error") else ""))
+            if s.get("relay") and not h.get("ok_at"):
+                lines.append(f"⏳ {s['name']}: در انتظار دریافت از رله")
+            else:
+                lines.append(f"{'✅' if not h.get('error') and h.get('ok_at') else '❌'} {s['name']}: {h.get('count', '—')} لینک" + (f" | خطا: {h['error'][:60]}" if h.get("error") else ""))
         lines.append(f"پیش‌نویس‌های منتظر: {db.drafts.count_documents({'status': 'draft'})} | خبرهای کم‌اهمیت‌شده (۷ روز): {db.skipped.count_documents({'t': {'$gt': time.time() - 7 * 86400}})}")
         now = time.time()
         lines.append(f"📤 منتشرشده: امروز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 86400}})} | ۷ روز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 7 * 86400}})}")
