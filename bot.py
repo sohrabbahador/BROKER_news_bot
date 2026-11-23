@@ -75,6 +75,65 @@ def _jalali_datetime_label(dt):
     jy, jm, jd = _gregorian_to_jalali(dt.year, dt.month, dt.day)
     return f"{jy:04d}/{jm:02d}/{jd:02d} ساعت {dt:%H:%M} (تهران)"
 
+_JALALI_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
+def _jalali_month_days(jy, jm):
+    from datetime import date
+    a = _jalali_to_gregorian(jy, jm, 1)
+    b = _jalali_to_gregorian(jy + 1, 1, 1) if jm == 12 else _jalali_to_gregorian(jy, jm + 1, 1)
+    return (date(*b) - date(*a)).days
+
+def _calendar_keyboard(jy, jm, draft_id):
+    from datetime import date
+    gy, gm, gd = _jalali_to_gregorian(jy, jm, 1)
+    offset = (date(gy, gm, gd).weekday() + 2) % 7
+    cells = [None] * offset + list(range(1, _jalali_month_days(jy, jm) + 1))
+    while len(cells) % 7: cells.append(None)
+    now = _tehran_now()
+    today = _gregorian_to_jalali(now.year, now.month, now.day)
+    rows = [
+        [{"text": "‹ ماه قبل", "callback_data": f"calprev:{draft_id}:{jy}:{jm}"},
+         {"text": f"{_JALALI_MONTHS[jm-1]} {jy}", "callback_data": "calnoop"},
+         {"text": "ماه بعد ›", "callback_data": f"calnext:{draft_id}:{jy}:{jm}"}],
+        [{"text": d, "callback_data": "calnoop"} for d in ["ش", "ی", "د", "س", "چ", "پ", "ج"]]
+    ]
+    for i in range(0, len(cells), 7):
+        row = []
+        for day in cells[i:i+7]:
+            if day is None: row.append({"text": "·", "callback_data": "calnoop"})
+            else:
+                label = f"〔{day}〕" if (jy, jm, day) == today else str(day)
+                row.append({"text": label, "callback_data": f"calday:{draft_id}:{jy}:{jm}:{day}"})
+        rows.append(row)
+    rows.append([{"text": "امروز", "callback_data": f"caltoday:{draft_id}"},
+                 {"text": "✖ لغو", "callback_data": f"calcancel:{draft_id}"}])
+    return rows
+
+async def _show_calendar(draft_id, jy=None, jm=None):
+    if jy is None:
+        now = _tehran_now()
+        jy, jm, _ = _gregorian_to_jalali(now.year, now.month, now.day)
+    await bale.send_message(config.ADMIN_ID,
+        "🗓 انتخاب تاریخ انتشار\nماه را انتخاب کن و روی روز دلخواه بزن.\nزمان‌بندی با ساعت تهران انجام می‌شود.",
+        keyboard=_calendar_keyboard(jy, jm, draft_id))
+
+async def _finish_schedule(draft_id, jy, jm, jd, time_text):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    m = re.fullmatch(r"(\\d{1,2}):(\\d{2})", _fa_to_en_digits(time_text.strip()))
+    if not m: raise ValueError("ساعت را مثل ۱۸:۳۰ وارد کن")
+    hh, minute = map(int, m.groups())
+    if hh > 23 or minute > 59: raise ValueError("ساعت نامعتبر است")
+    gy, gm, gd = _jalali_to_gregorian(jy, jm, jd)
+    dt = datetime(gy, gm, gd, hh, minute, tzinfo=ZoneInfo("Asia/Tehran"))
+    if dt.timestamp() <= time.time(): raise ValueError("زمان باید در آینده باشد")
+    target = db.drafts.find_one({"_id": draft_id, "status": "draft"})
+    if not target:
+        await bale.send_message(config.ADMIN_ID, "❌ این پیش‌نویس دیگر قابل زمان‌بندی نیست.")
+        return
+    db.drafts.update_one({"_id": draft_id, "status": "draft"}, {"$set": {"status": "scheduled", "scheduled_at": dt.timestamp()}})
+    await bale.send_message(config.ADMIN_ID, f"✅ خبر #{draft_id} برای {_jalali_datetime_label(dt)} زمان‌بندی شد.")
+
 PAUSED = False
 _ALERTED = {}
 
@@ -301,13 +360,61 @@ async def handle_callback(cb):
         await handle_message({"from": cb["from"], "text": "/" + data[2:]})
         return
     action, _, sid = data.partition(":")
+    if action == "calnoop":
+        await bale.answer_callback(cb["id"])
+        return
+    if action == "calcancel":
+        db.state.delete_one({"_id": "schedule_time"})
+        await bale.answer_callback(cb["id"], "زمان‌بندی لغو شد")
+        return
+    if action in ("calprev", "calnext"):
+        try:
+            draft_id, jy, jm = map(int, sid.split(":"))
+            jm += -1 if action == "calprev" else 1
+            if jm < 1: jy, jm = jy - 1, 12
+            if jm > 12: jy, jm = jy + 1, 1
+            await bale.answer_callback(cb["id"])
+            await _show_calendar(draft_id, jy, jm)
+        except Exception:
+            await bale.answer_callback(cb["id"], "خطا در تقویم")
+        return
+    if action in ("caltoday", "calday"):
+        try:
+            if action == "caltoday":
+                draft_id = int(sid)
+                now = _tehran_now()
+                jy, jm, jd = _gregorian_to_jalali(now.year, now.month, now.day)
+            else:
+                draft_id, jy, jm, jd = map(int, sid.split(":"))
+            db.state.update_one({"_id": "schedule_time"}, {"$set": {"draft": draft_id, "jy": jy, "jm": jm, "jd": jd}}, upsert=True)
+            await bale.answer_callback(cb["id"], f"{jy:04d}/{jm:02d}/{jd:02d} انتخاب شد")
+            await bale.send_message(config.ADMIN_ID,
+                f"📅 تاریخ انتخاب‌شده: {jy:04d}/{jm:02d}/{jd:02d}\\nساعت را انتخاب کن یا خودت وارد کن:",
+                keyboard=[
+                    [{"text": "۰۹:۰۰", "callback_data": f"caltime:{draft_id}:09:00"}, {"text": "۱۲:۰۰", "callback_data": f"caltime:{draft_id}:12:00"}],
+                    [{"text": "۱۸:۰۰", "callback_data": f"caltime:{draft_id}:18:00"}, {"text": "۲۱:۰۰", "callback_data": f"caltime:{draft_id}:21:00"}]
+                ])
+        except Exception:
+            await bale.answer_callback(cb["id"], "تاریخ انتخابی نامعتبر است")
+        return
+    if action == "caltime":
+        try:
+            draft_id, hh, mm = sid.split(":")
+            st = db.state.find_one({"_id": "schedule_time", "draft": int(draft_id)})
+            if not st: raise ValueError("ابتدا تاریخ را انتخاب کن")
+            await _finish_schedule(int(draft_id), st["jy"], st["jm"], st["jd"], f"{hh}:{mm}")
+            db.state.delete_one({"_id": "schedule_time"})
+            await bale.answer_callback(cb["id"], "زمان‌بندی ثبت شد")
+        except Exception as e:
+            await bale.answer_callback(cb["id"], str(e)[:150])
+        return
     d = db.drafts.find_one({"_id": int(sid)}) if sid.isdigit() else None
     if not d or d["status"] != "draft":
         await bale.answer_callback(cb["id"], "این پیش‌نویس دیگر فعال نیست"); return
     if action == "schedule":
-        db.state.update_one({"_id": "schedule"}, {"$set": {"draft": d["_id"]}}, upsert=True)
+        db.state.update_one({"_id": "schedule_time"}, {"$set": {"draft": d["_id"]}}, upsert=True)
         await bale.answer_callback(cb["id"])
-        await bale.send_message(config.ADMIN_ID, "🕒 زمان انتشار را به تاریخ شمسی و ساعت تهران بفرستید.\nقالب: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰\nبرای انتشار در ساعت مشخص امروز فقط ساعت را بفرستید: ۱۸:۳۰")
+        await _show_calendar(d["_id"])
         return
     if action in ("now", "ok"):
         if time.time() - d["created"] > STALE_HOURS * 3600:
@@ -400,33 +507,14 @@ async def _handle(m):
         lines.append(f"📤 منتشرشده: امروز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 86400}})} | ۷ روز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 7 * 86400}})}")
         await bale.send_message(config.ADMIN_ID, "\n".join(lines))
     elif text and not text.startswith("/"):
-        sched = db.state.find_one_and_delete({"_id": "schedule"})
+        sched = db.state.find_one_and_delete({"_id": "schedule_time"})
         if sched:
             try:
-                from datetime import datetime
-                from zoneinfo import ZoneInfo
-                value = _fa_to_en_digits(text.strip()).replace("-", "/")
-                tz = ZoneInfo("Asia/Tehran")
-                if re.fullmatch(r"\d{1,2}:\d{2}", value):
-                    now_local = _tehran_now()
-                    value = f"{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[0]:04d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[1]:02d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[2]:02d} {value}"
-                match = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})", value)
-                if not match:
-                    raise ValueError("قالب تاریخ و ساعت درست نیست")
-                jy, jm, jd, hh, minute = map(int, match.groups())
-                gy, gm, gd = _jalali_to_gregorian(jy, jm, jd)
-                dt = datetime(gy, gm, gd, hh, minute, tzinfo=tz)
-                if dt.timestamp() <= time.time():
-                    raise ValueError("زمان باید در آینده باشد")
-                target = db.drafts.find_one({"_id": sched["draft"], "status": "draft"})
-                if not target:
-                    await bale.send_message(config.ADMIN_ID, "❌ این پیش‌نویس دیگر قابل زمان‌بندی نیست.")
-                else:
-                    db.drafts.update_one({"_id": target["_id"], "status": "draft"},
-                                         {"$set": {"status": "scheduled", "scheduled_at": dt.timestamp()}})
-                    await bale.send_message(config.ADMIN_ID, f"✅ خبر #{target['_id']} برای {_jalali_datetime_label(dt)} زمان‌بندی شد.")
+                await _finish_schedule(int(sched["draft"]), int(sched["jy"]), int(sched["jm"]), int(sched["jd"]), text)
+                db.state.delete_one({"_id": "schedule_time"})
             except Exception:
-                await bale.send_message(config.ADMIN_ID, "❌ تاریخ یا ساعت نامعتبر است یا در گذشته قرار دارد. نمونه: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰ یا ۱۸:۳۰")
+                db.state.update_one({"_id": "schedule_time"}, {"$set": sched}, upsert=True)
+                await bale.send_message(config.ADMIN_ID, "❌ ساعت معتبر نیست یا زمان گذشته است. ساعت را مثل ۱۸:۳۰ وارد کن.")
         else:
             st = db.state.find_one_and_delete({"_id": "edit"})
             if st:
