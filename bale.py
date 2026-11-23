@@ -11,9 +11,13 @@ async def call(method, **payload):
     except Exception:
         return {"ok": False, "description": f"HTTP {r.status_code}"}
 
-async def send_message(chat_id, text, keyboard=None):
+async def send_message(chat_id, text, keyboard=None, reply_keyboard=None):
+    """keyboard = دکمه‌های زیر پیام (inline)؛ reply_keyboard = کلیدهای ثابت پایین صفحه‌ی چت."""
     p = {"chat_id": chat_id, "text": text[:4000]}
-    if keyboard: p["reply_markup"] = {"inline_keyboard": keyboard}
+    if keyboard:
+        p["reply_markup"] = {"inline_keyboard": keyboard}
+    elif reply_keyboard:
+        p["reply_markup"] = {"keyboard": [[{"text": t} for t in row] for row in reply_keyboard], "resize_keyboard": True}
     return await call("sendMessage", **p)
 
 async def send_photo(chat_id, png: bytes, caption="", keyboard=None):
