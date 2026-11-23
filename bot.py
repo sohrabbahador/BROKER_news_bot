@@ -143,21 +143,26 @@ def _safe(value):
     return html.escape(str(value or ""), quote=False)
 
 
+def _clean_message_text(value):
+    """اصلاح شکست‌خط‌هایی که ممکن است به‌صورت متن خام \\n ذخیره شده باشند."""
+    return str(value or "").replace("\\n", "\n").replace("\\r\n", "\n").strip()
+
+
 def build_caption(d):
     """متن عمومی؛ تیتر با قالب بولد سازگار با بله."""
-    headline = str(d.get("headline", "") or "").replace("*", "")
-    summary = str(d.get("summary", "") or "")
-    meaning = str(d.get("meaning", "") or "")
-    speaker = (d.get("speaker") or "").strip()
+    headline = _clean_message_text(d.get("headline", "")).replace("*", "")
+    summary = _clean_message_text(d.get("summary", ""))
+    meaning = _clean_message_text(d.get("meaning", ""))
+    speaker = _clean_message_text(d.get("speaker", ""))
     parts = [f"*{headline}*"]
     if speaker and speaker != "نامشخص":
-        parts.append(f"به گفتهٔ {speaker}:\\n{summary}")
+        parts.append(f"به گفتهٔ {speaker}:\n{summary}")
     else:
-        parts.append(f"در متن خبر، نام مقام یا صادرکننده دستور مشخص نشده است.\\n{summary}")
+        parts.append(f"در متن خبر، نام مقام یا صادرکننده دستور مشخص نشده است.\n{summary}")
     if meaning:
-        parts.append(f"💡 *خلاصه که؛*\\n{meaning}")
-    parts.append("⚖️ سهراب بهادر | بروکر املاک\\n🆔 @BROKER_amlak\\n📱 09123692401\\n📱 09003692401")
-    return "\\n\\n".join(p for p in parts if p)
+        parts.append(f"💡 *خلاصه که؛*\n{meaning}")
+    parts.append("⚖️ سهراب بهادر | بروکر املاک\n🆔 @BROKER_amlak\n📱 09123692401\n📱 09003692401")
+    return "\n\n".join(p for p in parts if p)
 
 
 def build_admin_caption(d):
@@ -301,7 +306,7 @@ async def handle_callback(cb):
     if action == "schedule":
         db.state.update_one({"_id": "schedule"}, {"$set": {"draft": d["_id"]}}, upsert=True)
         await bale.answer_callback(cb["id"])
-        await bale.send_message(config.ADMIN_ID, "🕒 زمان انتشار را به تاریخ شمسی و ساعت تهران بفرستید.\\nقالب: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰\\nبرای انتشار در ساعت مشخص امروز فقط ساعت را بفرستید: ۱۸:۳۰")
+        await bale.send_message(config.ADMIN_ID, "🕒 زمان انتشار را به تاریخ شمسی و ساعت تهران بفرستید.\nقالب: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰\nبرای انتشار در ساعت مشخص امروز فقط ساعت را بفرستید: ۱۸:۳۰")
         return
     if action in ("now", "ok"):
         if time.time() - d["created"] > STALE_HOURS * 3600:
