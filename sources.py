@@ -59,6 +59,47 @@ def parse_feed(xml_text: str):
             if title and link: out.append({"title": title, "url": link})
     return out
 
+class _ChannelPosts(HTMLParser):
+    """استخراج متن پست‌های قابل مشاهده در صفحات عمومی کانال‌ها."""
+    TARGETS = {"message-text", "message_body", "message-body", "post-text", "post-content",
+               "message_content", "message-content", "text-content", "message__text", "post-body"}
+    def __init__(self, platform, channel_url):
+        super().__init__(); self.platform = platform; self.channel_url = channel_url
+        self.posts = []; self.depth = 0; self.wrapper = None; self.capture_depth = None
+        self.parts = []; self.post_url = channel_url
+    def handle_starttag(self, tag, attrs):
+        self.depth += 1
+        a = dict(attrs); classes = set((a.get("class") or "").split())
+        if self.platform == "telegram" and "tgme_widget_message_wrap" in classes:
+            self.wrapper = self.depth
+            self.post_url = "https://t.me/" + a.get("data-post", "") if a.get("data-post") else self.channel_url
+        is_text = ("tgme_widget_message_text" in classes) if self.platform == "telegram" else bool(classes & self.TARGETS)
+        if is_text and self.capture_depth is None:
+            self.capture_depth = self.depth; self.parts = []
+        if self.capture_depth is not None and tag == "a" and a.get("href") and self.platform == "telegram":
+            if a["href"].startswith("https://t.me/"): self.post_url = a["href"]
+    def handle_data(self, data):
+        if self.capture_depth is not None and data.strip(): self.parts.append(data.strip())
+    def handle_endtag(self, tag):
+        if self.capture_depth == self.depth:
+            txt = re.sub(r"\s+", " ", " ".join(self.parts)).strip()
+            if len(txt) >= 35:
+                self.posts.append({"title": txt[:180], "url": self.post_url, "body": txt})
+            self.capture_depth = None; self.parts = []
+        if self.wrapper == self.depth:
+            self.wrapper = None
+        self.depth = max(0, self.depth - 1)
+
+def extract_channel_items(html: str, src: dict):
+    """پست‌های عمومی تلگرام/ایتا/بله؛ بدون ورود به حساب یا دسترسی خصوصی."""
+    p = _ChannelPosts(src.get("platform"), src["url"]); p.feed(html)
+    unique, seen = [], set()
+    for item in p.posts:
+        key = item["url"] if item["url"] != src["url"] else item["body"][:250]
+        if key not in seen:
+            seen.add(key); unique.append(item)
+    return unique
+
 class _Text(HTMLParser):
     SKIP = {"script", "style", "nav", "header", "footer", "aside", "form"}
     def __init__(self):
@@ -97,6 +138,8 @@ async def fetch(url: str, timeout=20):
 async def list_items(src: dict):
     r, _ = await fetch(src["url"])
     r.raise_for_status()
+    if src.get("platform"):
+        return extract_channel_items(r.text, src)
     items, feeds = extract_links(r.text, src["url"])
     if feeds:
         try:

@@ -16,7 +16,10 @@ SIGNATURE = _e("CHANNEL_SIGNATURE", "🏠 بروکر املاک")
 
 # ردیف اول (رسمی) = 🟢 ؛ سیگنال رسانه‌ای = 🟡
 SOURCES = [
-    {"key": "mrud", "name": "وزارت راه و شهرسازی", "url": _e("NEWS_URL_MRUD", "https://www.mrud.ir"), "official": True},
+    {"key": "mrud", "name": "وزارت راه و شهرسازی - سایت رسمی", "url": _e("NEWS_URL_MRUD", "https://news.mrud.ir"), "official": True},
+    {"key": "mrud_tg", "name": "وزارت راه و شهرسازی - تلگرام", "url": "https://t.me/s/mrudNews", "official": True, "platform": "telegram"},
+    {"key": "mrud_eitaa", "name": "وزارت راه و شهرسازی - ایتا", "url": "https://eitaa.com/mrudnews", "official": True, "platform": "eitaa"},
+    {"key": "mrud_bale", "name": "وزارت راه و شهرسازی - بله", "url": "https://ble.ir/newsmrud", "official": True, "platform": "bale"},
     {"key": "ssaa", "name": "سازمان ثبت اسناد و املاک کشور", "url": _e("NEWS_URL_SSAA", "https://www.ssaa.ir"), "official": True},
     {"key": "tax", "name": "سازمان امور مالیاتی", "url": _e("NEWS_URL_TAX", "https://www.intamedia.ir"), "official": True},
     {"key": "cbi", "name": "بانک مرکزی جمهوری اسلامی ایران", "url": _e("NEWS_URL_CBI", "https://www.cbi.ir"), "official": True},
@@ -31,7 +34,7 @@ for _i, _x in enumerate([p for p in _e("EXTRA_SOURCES").split(";") if "|" in p],
     _n, _u = _x.split("|", 1)                      # EXTRA_SOURCES="نام|آدرس;نام|آدرس"
     SOURCES.append({"key": f"x{_i}", "name": _n.strip(), "url": _u.strip(), "official": False})
 
-_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,cbi,amar").split(",") if x.strip()]
+_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,cbi,amar,mrud_tg,mrud_eitaa,mrud_bale").split(",") if x.strip()]
 for _s in SOURCES:
     _s["relay"] = _s["key"] in _RELAY      # این منبع‌ها از رله‌ی داخل ایران می‌آیند، نه مستقیم از Render
 
