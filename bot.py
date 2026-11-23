@@ -3,6 +3,78 @@ import asyncio, re, time, html
 import config, bale, sources, analyze, card
 from db import db
 
+def _fa_to_en_digits(value):
+    return str(value).translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+
+
+def _jalali_to_gregorian(jy, jm, jd):
+    jy -= 979
+    jm -= 1
+    jd -= 1
+    j_day_no = 365 * jy + (jy // 33) * 8 + ((jy % 33 + 3) // 4)
+    j_month_days = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]
+    j_day_no += sum(j_month_days[:jm]) + jd
+    g_day_no = j_day_no + 79
+    gy = 1600 + 400 * (g_day_no // 146097)
+    g_day_no %= 146097
+    leap = True
+    if g_day_no >= 36525:
+        g_day_no -= 1
+        gy += 100 * (g_day_no // 36524)
+        g_day_no %= 36524
+        if g_day_no >= 365:
+            g_day_no += 1
+        else:
+            leap = False
+    gy += 4 * (g_day_no // 1461)
+    g_day_no %= 1461
+    if g_day_no >= 366:
+        leap = False
+        g_day_no -= 1
+        gy += g_day_no // 365
+        g_day_no %= 365
+    g_month_days = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gm = 0
+    while gm < 12 and g_day_no >= g_month_days[gm]:
+        g_day_no -= g_month_days[gm]
+        gm += 1
+    return gy, gm + 1, g_day_no + 1
+
+
+def _gregorian_to_jalali(gy, gm, gd):
+    g_month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gy2 = gy - 1600
+    gm2 = gm - 1
+    gd2 = gd - 1
+    g_day_no = 365 * gy2 + (gy2 + 3) // 4 - (gy2 + 99) // 100 + (gy2 + 399) // 400
+    g_day_no += sum(g_month_days[:gm2]) + gd2
+    if gm2 > 1 and ((gy % 4 == 0 and gy % 100 != 0) or gy % 400 == 0):
+        g_day_no += 1
+    j_day_no = g_day_no - 79
+    j_np = j_day_no // 12053
+    j_day_no %= 12053
+    jy = 979 + 33 * j_np + 4 * (j_day_no // 1461)
+    j_day_no %= 1461
+    if j_day_no >= 366:
+        jy += (j_day_no - 1) // 365
+        j_day_no = (j_day_no - 1) % 365
+    jm = 1
+    while jm <= 11 and j_day_no >= (31 if jm <= 6 else 30):
+        j_day_no -= 31 if jm <= 6 else 30
+        jm += 1
+    return jy, jm, j_day_no + 1
+
+
+def _tehran_now():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Tehran"))
+
+
+def _jalali_datetime_label(dt):
+    jy, jm, jd = _gregorian_to_jalali(dt.year, dt.month, dt.day)
+    return f"{jy:04d}/{jm:02d}/{jd:02d} ساعت {dt:%H:%M} (تهران)"
+
 PAUSED = False
 _ALERTED = {}
 
@@ -16,9 +88,10 @@ async def alert(text, key=None, every=3600):
         await bale.send_message(config.ADMIN_ID, text)
     except Exception:
         pass
-KB = lambda i: [[{"text": "✅ تأیید و انتشار", "callback_data": f"ok:{i}"}],
+KB = lambda i: [[{"text": "🚀 انتشار فوری", "callback_data": f"now:{i}"},
+                 {"text": "🕒 زمان‌بندی انتشار", "callback_data": f"schedule:{i}"}],
                 [{"text": "✏️ ویرایش متن", "callback_data": f"ed:{i}"}, {"text": "🔄 بازنویسی", "callback_data": f"re:{i}"}],
-                [{"text": "❌ رد", "callback_data": f"no:{i}"}]]
+                [{"text": "❌ رد خبر", "callback_data": f"no:{i}"}]]
 
 MENU = [["📰 خبرهای تازه", "🧪 نمونه"], ["📊 وضعیت", "🔄 بررسی فوری"], ["🔎 تست سیستم"], ["⏸ توقف پایش", "▶️ ادامه پایش"]]
 MENU_CMD = {"📰 خبرهای تازه": "/latest", "🧪 نمونه": "/demo", "📊 وضعیت": "/status", "🔄 بررسی فوری": "/now",
@@ -71,29 +144,29 @@ def _safe(value):
 
 
 def build_caption(d):
-    """متن عمومی؛ بدون وضعیت رسمی، نام منبع و لینک خبر."""
-    headline = _safe(d.get("headline", ""))
-    summary = _safe(d.get("summary", ""))
-    meaning = _safe(d.get("meaning", ""))
+    """متن عمومی؛ تیتر با قالب بولد سازگار با بله."""
+    headline = str(d.get("headline", "") or "").replace("*", "")
+    summary = str(d.get("summary", "") or "")
+    meaning = str(d.get("meaning", "") or "")
     speaker = (d.get("speaker") or "").strip()
-    parts = [f"<b>{headline}</b>"]
+    parts = [f"*{headline}*"]
     if speaker and speaker != "نامشخص":
-        parts.append(f"به گفتهٔ {_safe(speaker)}:\n{summary}")
+        parts.append(f"به گفتهٔ {speaker}:\\n{summary}")
     else:
-        parts.append(f"در متن خبر، نام مقام یا صادرکننده دستور مشخص نشده است.\n{summary}")
+        parts.append(f"در متن خبر، نام مقام یا صادرکننده دستور مشخص نشده است.\\n{summary}")
     if meaning:
-        parts.append(f"💡 <b>خلاصه که؛</b>\n{meaning}")
-    parts.append("<b>⚖️ سهراب بهادر | بروکر املاک</b>\n🆔 @BROKER_amlak\n📱 09123692401\n📱 09003692401")
-    return "\n\n".join(p for p in parts if p)
+        parts.append(f"💡 *خلاصه که؛*\\n{meaning}")
+    parts.append("⚖️ سهراب بهادر | بروکر املاک\\n🆔 @BROKER_amlak\\n📱 09123692401\\n📱 09003692401")
+    return "\\n\\n".join(p for p in parts if p)
 
 
 def build_admin_caption(d):
     """اطلاعات مدیریتی محرمانه؛ فقط برای مدیر."""
     label = "🟢 خبر رسمی" if d.get("official") else "🟡 گزارش رسانه‌ای (تأیید رسمی نشده)"
-    parts = [label, build_caption(d), f"📌 منبع: {_safe(d.get('source', ''))}"]
+    parts = [label, build_caption(d), f"📌 منبع: {d.get('source', '')}"]
     if d.get("url"):
-        parts.append(f"🔗 لینک منبع: {_safe(short_url(d['url']))}")
-    return "\n\n".join(p for p in parts if p)
+        parts.append(f"🔗 لینک منبع: {short_url(d['url'])}")
+    return "\\n\\n".join(p for p in parts if p)
 
 def _next_id():
     r = db.counters.find_one_and_update({"_id": "draft"}, {"$inc": {"n": 1}}, upsert=True, return_document=True)
@@ -127,9 +200,9 @@ async def show_draft(d, suspect=None):
 async def publish(d):
     cap = build_caption(d)
     if d.get("custom_caption"):
-        edited = html.escape(str(d["custom_caption"]), quote=False).replace("\n", "<br>")
-        cap = f"<b>{_safe(d.get('headline', ''))}</b>\n\n{edited}"
-    return await bale.send_message(config.CHANNEL_ID, cap, parse_mode="HTML")
+        edited = str(d["custom_caption"])
+        cap = f"*{str(d.get('headline', '')).replace('*', '')}*\n\n{edited}"
+    return await bale.send_message(config.CHANNEL_ID, cap, parse_mode="Markdown")
 
 # ---------- پایش منابع ----------
 async def process_items(src, items, bodies=None, limit=5):
@@ -225,7 +298,12 @@ async def handle_callback(cb):
     d = db.drafts.find_one({"_id": int(sid)}) if sid.isdigit() else None
     if not d or d["status"] != "draft":
         await bale.answer_callback(cb["id"], "این پیش‌نویس دیگر فعال نیست"); return
-    if action == "ok":
+    if action == "schedule":
+        db.state.update_one({"_id": "schedule"}, {"$set": {"draft": d["_id"]}}, upsert=True)
+        await bale.answer_callback(cb["id"])
+        await bale.send_message(config.ADMIN_ID, "🕒 زمان انتشار را به تاریخ شمسی و ساعت تهران بفرستید.\\nقالب: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰\\nبرای انتشار در ساعت مشخص امروز فقط ساعت را بفرستید: ۱۸:۳۰")
+        return
+    if action in ("now", "ok"):
         if time.time() - d["created"] > STALE_HOURS * 3600:
             db.drafts.update_one({"_id": d["_id"]}, {"$set": {"status": "expired"}})
             await bale.answer_callback(cb["id"], "قدیمی شده؛ خبر را دوباره بگیرید"); return
@@ -316,14 +394,42 @@ async def _handle(m):
         lines.append(f"📤 منتشرشده: امروز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 86400}})} | ۷ روز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 7 * 86400}})}")
         await bale.send_message(config.ADMIN_ID, "\n".join(lines))
     elif text and not text.startswith("/"):
-        st = db.state.find_one_and_delete({"_id": "edit"})
-        if st:
-            db.drafts.update_one({"_id": st["draft"]}, {"$set": {"custom_caption": text}})
-            await show_draft(db.drafts.find_one({"_id": st["draft"]}))
-        elif len(text) >= 40:
-            await make_draft(text.split("\n")[0][:90], text, "ارسال دستی مدیر", False)
+        sched = db.state.find_one_and_delete({"_id": "schedule"})
+        if sched:
+            try:
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                value = _fa_to_en_digits(text.strip()).replace("-", "/")
+                tz = ZoneInfo("Asia/Tehran")
+                if re.fullmatch(r"\\d{1,2}:\\d{2}", value):
+                    now_local = _tehran_now()
+                    value = f"{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[0]:04d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[1]:02d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[2]:02d} {value}"
+                match = re.fullmatch(r"(\\d{4})/(\\d{1,2})/(\\d{1,2})\\s+(\\d{1,2}):(\\d{2})", value)
+                if not match:
+                    raise ValueError("قالب تاریخ و ساعت درست نیست")
+                jy, jm, jd, hh, minute = map(int, match.groups())
+                gy, gm, gd = _jalali_to_gregorian(jy, jm, jd)
+                dt = datetime(gy, gm, gd, hh, minute, tzinfo=tz)
+                if dt.timestamp() <= time.time():
+                    raise ValueError("زمان باید در آینده باشد")
+                target = db.drafts.find_one({"_id": sched["draft"], "status": "draft"})
+                if not target:
+                    await bale.send_message(config.ADMIN_ID, "❌ این پیش‌نویس دیگر قابل زمان‌بندی نیست.")
+                else:
+                    db.drafts.update_one({"_id": target["_id"], "status": "draft"},
+                                         {"$set": {"status": "scheduled", "scheduled_at": dt.timestamp()}})
+                    await bale.send_message(config.ADMIN_ID, f"✅ خبر #{target['_id']} برای {_jalali_datetime_label(dt)} زمان‌بندی شد.")
+            except Exception:
+                await bale.send_message(config.ADMIN_ID, "❌ تاریخ یا ساعت نامعتبر است یا در گذشته قرار دارد. نمونه: ۱۴۰۵/۰۹/۰۳ ۱۸:۳۰ یا ۱۸:۳۰")
         else:
-            await bale.send_message(config.ADMIN_ID, "متن خبر را کامل‌تر بفرستید (حداقل چند جمله).")
+            st = db.state.find_one_and_delete({"_id": "edit"})
+            if st:
+                db.drafts.update_one({"_id": st["draft"]}, {"$set": {"custom_caption": text}})
+                await show_draft(db.drafts.find_one({"_id": st["draft"]}))
+            elif len(text) >= 40:
+                await make_draft(text.split("\n")[0][:90], text, "ارسال دستی مدیر", False)
+            else:
+                await bale.send_message(config.ADMIN_ID, "متن خبر را کامل‌تر بفرستید (حداقل چند جمله).")
 
 async def handle_message(m):
     """فقط مدیر؛ کلیدهای ثابت به دستور تبدیل می‌شوند و هر کار در پس‌زمینه اجرا می‌شود تا پایش پیام‌ها قفل نشود."""
@@ -347,6 +453,32 @@ async def poll_updates():
             await alert(f"❌ خطای ربات هنگام پردازش پیام: {type(e).__name__}: {str(e)[:200]}", key="upd")
             await asyncio.sleep(5)
 
+async def publish_scheduled():
+    """انتشار خبرهایی که زمان تعیین‌شده‌شان رسیده است."""
+    now = time.time()
+    due = list(db.drafts.find({"status": "scheduled", "scheduled_at": {"$lte": now}}).limit(20))
+    for d in due:
+        locked = db.drafts.find_one_and_update(
+            {"_id": d["_id"], "status": "scheduled"},
+            {"$set": {"status": "publishing"}}
+        )
+        if not locked:
+            continue
+        try:
+            result = await publish(d)
+            if result.get("ok"):
+                db.drafts.update_one({"_id": d["_id"]},
+                    {"$set": {"status": "published", "published_at": time.time(), "scheduled_at": None}})
+            else:
+                db.drafts.update_one({"_id": d["_id"]},
+                    {"$set": {"status": "scheduled", "scheduled_at": now + 300}})
+                await alert(f"❌ انتشار زمان‌بندی‌شده #{d['_id']} ناموفق بود؛ ۵ دقیقه دیگر دوباره تلاش می‌شود.")
+        except Exception as e:
+            db.drafts.update_one({"_id": d["_id"]},
+                {"$set": {"status": "scheduled", "scheduled_at": now + 300}})
+            await alert(f"❌ خطای انتشار زمان‌بندی‌شده #{d['_id']}: {type(e).__name__}")
+
+
 async def scheduler():
     await asyncio.sleep(10)
     try:
@@ -354,13 +486,17 @@ async def scheduler():
     except Exception as e:
         print("announce error:", e)
     await asyncio.sleep(5)
+    last_poll = 0
     while True:
         try:
-            n = await poll_sources()
-            print(f"poll cycle ok, new drafts: {n}")
-            db.health.update_one({"_id": "scheduler"}, {"$set": {"t": time.time(), "drafts": n, "error": None}}, upsert=True)
+            await publish_scheduled()
+            if time.time() - last_poll >= config.POLL_SECONDS:
+                n = await poll_sources()
+                last_poll = time.time()
+                print(f"poll cycle ok, new drafts: {n}")
+                db.health.update_one({"_id": "scheduler"}, {"$set": {"t": time.time(), "drafts": n, "error": None}}, upsert=True)
         except Exception as e:
             print("scheduler error:", e)
             db.health.update_one({"_id": "scheduler"}, {"$set": {"t": time.time(), "error": f"{type(e).__name__}: {str(e)[:150]}"}}, upsert=True)
             await alert(f"❌ خطا در چرخه‌ی پایش: {type(e).__name__}: {str(e)[:200]}", key="sched")
-        await asyncio.sleep(config.POLL_SECONDS)
+        await asyncio.sleep(5)
