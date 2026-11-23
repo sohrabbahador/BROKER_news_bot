@@ -31,6 +31,17 @@ class T(unittest.TestCase):
         t = sources.extract_text(HTML)
         self.assertIn("۳۰ روز", t); self.assertNotIn("محفوظ", t)
 
+    def test_public_channel_parsers(self):
+        telegram = '<div class="tgme_widget_message_wrap" data-post="mrudNews/123"><div class="tgme_widget_message_text">وزارت راه و شهرسازی از اجرای طرح جدید مسکن خبر داد که جزئیات آن اعلام شد.</div></div>'
+        items = sources.extract_channel_items(telegram, {"platform": "telegram", "url": "https://t.me/s/mrudNews"})
+        self.assertEqual(items[0]["url"], "https://t.me/mrudNews/123")
+        self.assertIn("طرح جدید مسکن", items[0]["body"])
+        for platform, url in (("eitaa", "https://eitaa.com/mrudnews"), ("bale", "https://ble.ir/newsmrud")):
+            html = '<div class="message-text"><span>وزارت راه و شهرسازی اعلام کرد طرح جدید مسکن در هفته آینده اجرا خواهد شد.</span></div>'
+            found = sources.extract_channel_items(html, {"platform": platform, "url": url})
+            self.assertEqual(len(found), 1)
+            self.assertIn("طرح جدید مسکن", found[0]["body"])
+
     def test_feed(self):
         x = "<rss><channel><item><title>خبر آزمایشی مسکن</title><link>https://a.ir/1</link></item></channel></rss>"
         self.assertEqual(sources.parse_feed(x)[0]["url"], "https://a.ir/1")
@@ -58,7 +69,7 @@ class T(unittest.TestCase):
     def test_caption_labels(self):
         d = {"headline": "ت", "summary": "خ", "meaning": "م", "source": "س", "official": False, "url": "https://x.ir"}
         c = bot.build_caption(d)
-        self.assertIn("<b>ت</b>", c)
+        self.assertIn("*ت*", c)
         self.assertIn("خلاصه که؛", c)
         self.assertIn("@BROKER_amlak", c)
         self.assertNotIn("https://x.ir", c)
