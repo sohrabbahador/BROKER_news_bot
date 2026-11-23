@@ -143,17 +143,18 @@ def _safe(value):
     return html.escape(str(value or ""), quote=False)
 
 
-def _clean_message_text(value):
-    """اصلاح شکست‌خط‌هایی که ممکن است به‌صورت متن خام \\n ذخیره شده باشند."""
-    return str(value or "").replace("\\n", "\n").replace("\\r\n", "\n").strip()
+def _clean_text(value):
+    """تبدیل نویسه‌های خط جدیدِ خام (\\n) به خط جدید واقعی و یکدست‌سازی متن."""
+    value = str(value or "")
+    return value.replace("\\\\r\\\\n", "\n").replace("\\\\n", "\n").replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
 
 
 def build_caption(d):
     """متن عمومی؛ تیتر با قالب بولد سازگار با بله."""
-    headline = _clean_message_text(d.get("headline", "")).replace("*", "")
-    summary = _clean_message_text(d.get("summary", ""))
-    meaning = _clean_message_text(d.get("meaning", ""))
-    speaker = _clean_message_text(d.get("speaker", ""))
+    headline = _clean_text(d.get("headline", "")).replace("*", "").strip()
+    summary = _clean_text(d.get("summary", "")).strip()
+    meaning = _clean_text(d.get("meaning", "")).strip()
+    speaker = _clean_text(d.get("speaker", "")).strip()
     parts = [f"*{headline}*"]
     if speaker and speaker != "نامشخص":
         parts.append(f"به گفتهٔ {speaker}:\n{summary}")
@@ -171,7 +172,7 @@ def build_admin_caption(d):
     parts = [label, build_caption(d), f"📌 منبع: {d.get('source', '')}"]
     if d.get("url"):
         parts.append(f"🔗 لینک منبع: {short_url(d['url'])}")
-    return "\\n\\n".join(p for p in parts if p)
+    return "\n\n".join(p for p in parts if p)
 
 def _next_id():
     r = db.counters.find_one_and_update({"_id": "draft"}, {"$inc": {"n": 1}}, upsert=True, return_document=True)
@@ -205,7 +206,7 @@ async def show_draft(d, suspect=None):
 async def publish(d):
     cap = build_caption(d)
     if d.get("custom_caption"):
-        edited = str(d["custom_caption"])
+        edited = _clean_text(d["custom_caption"]).strip()
         cap = f"*{str(d.get('headline', '')).replace('*', '')}*\n\n{edited}"
     return await bale.send_message(config.CHANNEL_ID, cap, parse_mode="Markdown")
 
@@ -406,10 +407,10 @@ async def _handle(m):
                 from zoneinfo import ZoneInfo
                 value = _fa_to_en_digits(text.strip()).replace("-", "/")
                 tz = ZoneInfo("Asia/Tehran")
-                if re.fullmatch(r"\\d{1,2}:\\d{2}", value):
+                if re.fullmatch(r"\d{1,2}:\d{2}", value):
                     now_local = _tehran_now()
                     value = f"{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[0]:04d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[1]:02d}/{_gregorian_to_jalali(now_local.year, now_local.month, now_local.day)[2]:02d} {value}"
-                match = re.fullmatch(r"(\\d{4})/(\\d{1,2})/(\\d{1,2})\\s+(\\d{1,2}):(\\d{2})", value)
+                match = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})", value)
                 if not match:
                     raise ValueError("قالب تاریخ و ساعت درست نیست")
                 jy, jm, jd, hh, minute = map(int, match.groups())
