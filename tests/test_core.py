@@ -47,6 +47,8 @@ class T(unittest.TestCase):
     def test_sections(self):
         s = analyze.parse_sections("تیتر: الف ب\nخلاصه: جمله اول. جمله دوم.\nبرای مردم یعنی: مستأجران بدانند.")
         self.assertEqual((s["headline"], s["meaning"]), ("الف ب", "مستأجران بدانند."))
+        s2 = analyze.parse_sections("تیتر: خبر\nگوینده: وزیر راه و شهرسازی\nخلاصه: متن\nبرای مردم یعنی: نتیجه")
+        self.assertEqual(s2["speaker"], "وزیر راه و شهرسازی")
 
     def test_importance(self):
         s = analyze.parse_sections("تیتر: الف\nخلاصه: ب.\nبرای مردم یعنی: ج.\nاهمیت: ۵")
@@ -56,8 +58,14 @@ class T(unittest.TestCase):
     def test_caption_labels(self):
         d = {"headline": "ت", "summary": "خ", "meaning": "م", "source": "س", "official": False, "url": "https://x.ir"}
         c = bot.build_caption(d)
-        self.assertIn("تأیید رسمی نشده", c); self.assertIn("https://x.ir", c)
-        d["official"] = True; self.assertIn("🟢 خبر رسمی", bot.build_caption(d))
+        self.assertIn("<b>ت</b>", c)
+        self.assertIn("خلاصه که؛", c)
+        self.assertIn("@BROKER_amlak", c)
+        self.assertNotIn("https://x.ir", c)
+        self.assertNotIn("تأیید رسمی نشده", c)
+        admin = bot.build_admin_caption(d)
+        self.assertIn("تأیید رسمی نشده", admin); self.assertIn("https://x.ir", admin)
+        d["official"] = True; self.assertIn("🟢 خبر رسمی", bot.build_admin_caption(d))
 
     def test_card_png(self):
         png = card.make_card("تیتر آزمایشی", "متن خلاصه " * 12, "سازمان", True)
