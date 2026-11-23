@@ -26,11 +26,11 @@ def run_once():
     for src in RELAY_KEYS:
         try:
             html = get(src["url"])
-            items, _ = sources.extract_links(html, src["url"])
+            items = sources.extract_channel_items(html, src) if src.get("platform") else sources.extract_links(html, src["url"])[0]
             new = [i for i in items if sources.uid(i["url"]) not in seen]
             send = []
             for it in new[:15]:
-                if sources.is_relevant(it["title"]):
+                if sources.is_relevant(it["title"]) and not it.get("body"):
                     try: it["body"] = sources.extract_text(get(it["url"]))
                     except Exception: it["body"] = ""
                 send.append(it)
