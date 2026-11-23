@@ -11,9 +11,10 @@ async def call(method, **payload):
     except Exception:
         return {"ok": False, "description": f"HTTP {r.status_code}"}
 
-async def send_message(chat_id, text, keyboard=None, reply_keyboard=None):
+async def send_message(chat_id, text, keyboard=None, reply_keyboard=None, parse_mode=None):
     """keyboard = دکمه‌های زیر پیام (inline)؛ reply_keyboard = کلیدهای ثابت پایین صفحه‌ی چت."""
     p = {"chat_id": chat_id, "text": text[:4000]}
+    if parse_mode: p["parse_mode"] = parse_mode
     if keyboard:
         p["reply_markup"] = {"inline_keyboard": keyboard}
     elif reply_keyboard:

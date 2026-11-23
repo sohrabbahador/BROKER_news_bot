@@ -1,5 +1,5 @@
 """منطق ربات: پایش منابع، پیش‌نویس، دکمه‌های تأیید/ویرایش/رد، انتشار در کانال."""
-import asyncio, re, time
+import asyncio, re, time, html
 import config, bale, sources, analyze, card
 from db import db
 
@@ -66,10 +66,33 @@ def short_url(u):
     m = re.match(r"(https?://[^/]+/news/\d+)", u or "")
     return m.group(1) if m else (u or "")
 
+def _safe(value):
+    return html.escape(str(value or ""), quote=False)
+
+
 def build_caption(d):
-    label = "🟢 خبر رسمی" if d["official"] else "🟡 گزارش رسانه‌ای (تأیید رسمی نشده)"
-    parts = [f"{label}\n\n🏛 {d['headline']}", d["summary"], f"💡 برای مردم یعنی: {d['meaning']}",
-             f"📌 منبع: {d['source']}" + (f"\n🔗 {short_url(d['url'])}" if d.get("url") else ""), config.SIGNATURE]
+    """متن عمومی؛ بدون وضعیت رسمی، نام منبع و لینک خبر."""
+    headline = _safe(d.get("headline", ""))
+    summary = _safe(d.get("summary", ""))
+    meaning = _safe(d.get("meaning", ""))
+    speaker = (d.get("speaker") or "").strip()
+    parts = [f"<b>{headline}</b>"]
+    if speaker and speaker != "نامشخص":
+        parts.append(f"به گفتهٔ {_safe(speaker)}:\n{summary}")
+    else:
+        parts.append(f"در متن خبر، نام مقام یا صادرکننده دستور مشخص نشده است.\n{summary}")
+    if meaning:
+        parts.append(f"💡 <b>خلاصه که؛</b>\n{meaning}")
+    parts.append("<b>⚖️ سهراب بهادر | بروکر املاک</b>\n🆔 @BROKER_amlak\n📱 09123692401\n📱 09003692401")
+    return "\n\n".join(p for p in parts if p)
+
+
+def build_admin_caption(d):
+    """اطلاعات مدیریتی محرمانه؛ فقط برای مدیر."""
+    label = "🟢 خبر رسمی" if d.get("official") else "🟡 گزارش رسانه‌ای (تأیید رسمی نشده)"
+    parts = [label, build_caption(d), f"📌 منبع: {_safe(d.get('source', ''))}"]
+    if d.get("url"):
+        parts.append(f"🔗 لینک منبع: {_safe(short_url(d['url']))}")
     return "\n\n".join(p for p in parts if p)
 
 def _next_id():
@@ -85,7 +108,7 @@ async def make_draft(title, body, source_name, official, url="", min_score=0):
         db.skipped.insert_one({"title": title[:120], "source": source_name, "score": a.get("importance"), "t": time.time()})
         return False
     i = _next_id()
-    d = {"_id": i, "headline": a["headline"] or title[:80], "summary": a["summary"], "meaning": a["meaning"],
+    d = {"_id": i, "headline": a["headline"] or title[:80], "speaker": a.get("speaker", "نامشخص"), "summary": a["summary"], "meaning": a["meaning"],
          "source": source_name, "official": official, "url": url, "status": "draft", "created": time.time(),
          "custom_caption": None, "importance": a.get("importance", 3), "orig_title": title[:200]}
     db.drafts.insert_one(d)
@@ -98,20 +121,15 @@ async def show_draft(d, suspect=None):
     if suspect:
         warn = f"\n\n⚠️ این عددها در متن مبدأ پیدا نشد؛ قبل از انتشار حتماً بررسی کنید: {', '.join(suspect)}"
     head = f"📝 پیش‌نویس #{d['_id']} | ⭐ اهمیت {d.get('importance', 3)}/5"
-    try:
-        r = await bale.send_photo(config.ADMIN_ID, _card(d), head)
-        if not r.get("ok"):
-            raise RuntimeError(r.get("description", "sendPhoto failed"))
-    except Exception as e:                       # تصویر شکست بخورد هم پیش‌نویس گم نشود
-        await bale.send_message(config.ADMIN_ID, f"{head}\n(⚠️ تصویر ساخته یا ارسال نشد: {type(e).__name__}: {str(e)[:150]})")
-    await bale.send_message(config.ADMIN_ID, cap + warn, KB(d["_id"]))
+    admin_text = build_admin_caption(d) if not d.get("custom_caption") else build_admin_caption(d) + "\n\n✏️ متن ویرایش‌شده:\n" + _safe(cap)
+    await bale.send_message(config.ADMIN_ID, f"{head}\n\n{admin_text}{warn}", KB(d["_id"]), parse_mode="HTML")
 
 async def publish(d):
-    cap = d.get("custom_caption") or build_caption(d)
-    r = await bale.send_photo(config.CHANNEL_ID, _card(d), cap if len(cap) <= 1000 else d["headline"])
-    if r.get("ok") and len(cap) > 1000:
-        await bale.send_message(config.CHANNEL_ID, cap)
-    return r
+    cap = build_caption(d)
+    if d.get("custom_caption"):
+        edited = html.escape(str(d["custom_caption"]), quote=False).replace("\n", "<br>")
+        cap = f"<b>{_safe(d.get('headline', ''))}</b>\n\n{edited}"
+    return await bale.send_message(config.CHANNEL_ID, cap, parse_mode="HTML")
 
 # ---------- پایش منابع ----------
 async def process_items(src, items, bodies=None, limit=5):
@@ -230,7 +248,7 @@ async def handle_callback(cb):
     elif action == "re":
         await bale.answer_callback(cb["id"], "در حال بازنویسی…")
         a = await analyze.analyze(d["headline"], d["summary"])
-        db.drafts.update_one({"_id": d["_id"]}, {"$set": {"summary": a["summary"], "meaning": a["meaning"], "custom_caption": None}})
+        db.drafts.update_one({"_id": d["_id"]}, {"$set": {"summary": a["summary"], "meaning": a["meaning"], "speaker": a.get("speaker", d.get("speaker", "نامشخص")), "custom_caption": None}})
         await show_draft(db.drafts.find_one({"_id": d["_id"]}))
 
 async def _handle(m):
