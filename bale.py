@@ -30,6 +30,11 @@ async def send_photo(chat_id, png: bytes, caption="", keyboard=None):
     try: return r.json()
     except Exception: return {"ok": False}
 
+async def edit_message_keyboard(chat_id, message_id, keyboard=None):
+    """فقط صفحه‌کلید زیر همان پیام را عوض می‌کند؛ متن خبر دست‌نخورده می‌ماند."""
+    markup = {"inline_keyboard": keyboard} if keyboard else {"inline_keyboard": []}
+    return await call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup=markup)
+
 async def answer_callback(cb_id, text=""):
     return await call("answerCallbackQuery", callback_query_id=cb_id, text=text)
 

@@ -109,13 +109,42 @@ def _calendar_keyboard(jy, jm, draft_id):
                  {"text": "✖ لغو", "callback_data": f"calcancel:{draft_id}"}])
     return rows
 
-async def _show_calendar(draft_id, jy=None, jm=None):
+async def _set_schedule_keyboard(state, keyboard):
+    return await bale.edit_message_keyboard(state["chat_id"], state["message_id"], keyboard)
+
+async def _schedule_menu(state):
+    draft_id = state["draft"]
+    return await _set_schedule_keyboard(state, [
+        [{"text": "🚀 انتشار فوری", "callback_data": f"now:{draft_id}"}],
+        [{"text": "امروز", "callback_data": f"sctoday:{draft_id}"},
+         {"text": "فردا", "callback_data": f"sctomorrow:{draft_id}"}],
+        [{"text": "📅 انتخاب تاریخ", "callback_data": f"scalendar:{draft_id}"},
+         {"text": "✖ انصراف", "callback_data": f"sccancel:{draft_id}"}]
+    ])
+
+async def _show_calendar(state, jy=None, jm=None):
     if jy is None:
         now = _tehran_now()
         jy, jm, _ = _gregorian_to_jalali(now.year, now.month, now.day)
-    await bale.send_message(config.ADMIN_ID,
-        "🗓 انتخاب تاریخ انتشار\nماه را انتخاب کن و روی روز دلخواه بزن.\nزمان‌بندی با ساعت تهران انجام می‌شود.",
-        keyboard=_calendar_keyboard(jy, jm, draft_id))
+    draft_id = state["draft"]
+    keyboard = _calendar_keyboard(jy, jm, draft_id)
+    keyboard.append([{"text": "↩ بازگشت", "callback_data": f"scback:{draft_id}"}])
+    return await _set_schedule_keyboard(state, keyboard)
+
+async def _show_time_choices(state, jy, jm, jd):
+    db.state.update_one({"_id": "schedule_time", "draft": state["draft"]},
+        {"$set": {"jy": jy, "jm": jm, "jd": jd}}, upsert=True)
+    draft_id = state["draft"]
+    keyboard = [
+        [{"text": "۰۹:۰۰", "callback_data": f"caltime:{draft_id}:09:00"},
+         {"text": "۱۲:۰۰", "callback_data": f"caltime:{draft_id}:12:00"}],
+        [{"text": "۱۸:۰۰", "callback_data": f"caltime:{draft_id}:18:00"},
+         {"text": "۲۱:۰۰", "callback_data": f"caltime:{draft_id}:21:00"}],
+        [{"text": "⌨️ ورود ساعت دلخواه", "callback_data": f"scmanual:{draft_id}"},
+         {"text": "↩ بازگشت", "callback_data": f"scback:{draft_id}"}]
+    ]
+    await _set_schedule_keyboard(state, keyboard)
+
 
 async def _finish_schedule(draft_id, jy, jm, jd, time_text):
     from datetime import datetime
@@ -363,51 +392,81 @@ async def handle_callback(cb):
     if action == "calnoop":
         await bale.answer_callback(cb["id"])
         return
-    if action == "calcancel":
-        db.state.delete_one({"_id": "schedule_time"})
-        await bale.answer_callback(cb["id"], "زمان‌بندی لغو شد")
-        return
-    if action in ("calprev", "calnext"):
+    if action.startswith(("schedule", "sc")) or action.startswith(("calprev", "calnext", "calday", "caltoday", "caltime", "calcancel")):
         try:
-            draft_id, jy, jm = map(int, sid.split(":"))
-            jm += -1 if action == "calprev" else 1
-            if jm < 1: jy, jm = jy - 1, 12
-            if jm > 12: jy, jm = jy + 1, 1
-            await bale.answer_callback(cb["id"])
-            await _show_calendar(draft_id, jy, jm)
-        except Exception:
-            await bale.answer_callback(cb["id"], "خطا در تقویم")
-        return
-    if action in ("caltoday", "calday"):
-        try:
-            if action == "caltoday":
+            msg = cb.get("message") or {}
+            chat_id = (msg.get("chat") or {}).get("id", config.ADMIN_ID)
+            message_id = msg.get("message_id")
+            if action == "schedule":
                 draft_id = int(sid)
+                state = {"draft": draft_id, "chat_id": chat_id, "message_id": message_id}
+                db.state.update_one({"_id": "schedule_time"}, {"$set": state}, upsert=True)
+                await _schedule_menu(state)
+                await bale.answer_callback(cb["id"], "زمان انتشار را انتخاب کن")
+                return
+            draft_id = int(sid.split(":")[0])
+            state = db.state.find_one({"_id": "schedule_time", "draft": draft_id})
+            if not state:
+                state = {"draft": draft_id, "chat_id": chat_id, "message_id": message_id}
+            # Keep the original message coordinates even when a callback is pressed later.
+            if message_id:
+                state.update({"chat_id": chat_id, "message_id": message_id})
+                db.state.update_one({"_id": "schedule_time"}, {"$set": state}, upsert=True)
+            if action == "sccancel" or action == "calcancel":
+                db.state.delete_one({"_id": "schedule_time"})
+                await _set_schedule_keyboard(state, KB(draft_id))
+                await bale.answer_callback(cb["id"], "لغو شد")
+                return
+            if action == "scback":
+                await _schedule_menu(state)
+                await bale.answer_callback(cb["id"])
+                return
+            if action in ("sctoday", "sctomorrow", "caltoday"):
                 now = _tehran_now()
+                if action == "sctomorrow":
+                    from datetime import timedelta
+                    now += timedelta(days=1)
                 jy, jm, jd = _gregorian_to_jalali(now.year, now.month, now.day)
-            else:
-                draft_id, jy, jm, jd = map(int, sid.split(":"))
-            db.state.update_one({"_id": "schedule_time"}, {"$set": {"draft": draft_id, "jy": jy, "jm": jm, "jd": jd}}, upsert=True)
-            await bale.answer_callback(cb["id"], f"{jy:04d}/{jm:02d}/{jd:02d} انتخاب شد")
-            await bale.send_message(config.ADMIN_ID,
-                f"📅 تاریخ انتخاب‌شده: {jy:04d}/{jm:02d}/{jd:02d}\\nساعت را انتخاب کن یا خودت وارد کن:",
-                keyboard=[
-                    [{"text": "۰۹:۰۰", "callback_data": f"caltime:{draft_id}:09:00"}, {"text": "۱۲:۰۰", "callback_data": f"caltime:{draft_id}:12:00"}],
-                    [{"text": "۱۸:۰۰", "callback_data": f"caltime:{draft_id}:18:00"}, {"text": "۲۱:۰۰", "callback_data": f"caltime:{draft_id}:21:00"}]
-                ])
-        except Exception:
-            await bale.answer_callback(cb["id"], "تاریخ انتخابی نامعتبر است")
-        return
-    if action == "caltime":
-        try:
-            draft_id, hh, mm = sid.split(":")
-            st = db.state.find_one({"_id": "schedule_time", "draft": int(draft_id)})
-            if not st: raise ValueError("ابتدا تاریخ را انتخاب کن")
-            await _finish_schedule(int(draft_id), st["jy"], st["jm"], st["jd"], f"{hh}:{mm}")
-            db.state.delete_one({"_id": "schedule_time"})
-            await bale.answer_callback(cb["id"], "زمان‌بندی ثبت شد")
+                await _show_time_choices(state, jy, jm, jd)
+                await bale.answer_callback(cb["id"], f"{jy:04d}/{jm:02d}/{jd:02d}")
+                return
+            if action in ("scalendar",):
+                await _show_calendar(state)
+                await bale.answer_callback(cb["id"])
+                return
+            if action in ("calprev", "calnext"):
+                _, _, rest = data.partition(":")
+                _, jy, jm = map(int, rest.split(":"))
+                jm += -1 if action == "calprev" else 1
+                if jm < 1: jy, jm = jy - 1, 12
+                if jm > 12: jy, jm = jy + 1, 1
+                await _show_calendar(state, jy, jm)
+                await bale.answer_callback(cb["id"])
+                return
+            if action == "calday":
+                _, _, rest = data.partition(":")
+                _, jy, jm, jd = map(int, rest.split(":"))
+                await _show_time_choices(state, jy, jm, jd)
+                await bale.answer_callback(cb["id"], f"{jy:04d}/{jm:02d}/{jd:02d}")
+                return
+            if action == "scmanual":
+                db.state.update_one({"_id": "schedule_time"}, {"$set": {"awaiting_time": True}}, upsert=True)
+                await bale.answer_callback(cb["id"], "ساعت را در چت بفرست؛ نمونه ۱۸:۳۰")
+                await bale.send_message(config.ADMIN_ID, "⌨️ ساعت انتشار را بفرست؛ نمونه: ۱۸:۳۰")
+                return
+            if action == "caltime":
+                _, _, rest = data.partition(":")
+                _, hh, mm = rest.split(":")
+                st = db.state.find_one({"_id": "schedule_time", "draft": draft_id})
+                if not st or "jy" not in st: raise ValueError("ابتدا تاریخ را انتخاب کن")
+                await _finish_schedule(draft_id, st["jy"], st["jm"], st["jd"], f"{hh}:{mm}")
+                db.state.delete_one({"_id": "schedule_time"})
+                await _set_schedule_keyboard(state, KB(draft_id))
+                await bale.answer_callback(cb["id"], "زمان‌بندی ثبت شد")
+                return
         except Exception as e:
-            await bale.answer_callback(cb["id"], str(e)[:150])
-        return
+            await bale.answer_callback(cb["id"], str(e)[:140])
+            return
     d = db.drafts.find_one({"_id": int(sid)}) if sid.isdigit() else None
     if not d or d["status"] != "draft":
         await bale.answer_callback(cb["id"], "این پیش‌نویس دیگر فعال نیست"); return
@@ -507,13 +566,13 @@ async def _handle(m):
         lines.append(f"📤 منتشرشده: امروز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 86400}})} | ۷ روز {db.drafts.count_documents({'status': 'published', 'published_at': {'$gt': now - 7 * 86400}})}")
         await bale.send_message(config.ADMIN_ID, "\n".join(lines))
     elif text and not text.startswith("/"):
-        sched = db.state.find_one_and_delete({"_id": "schedule_time"})
+        sched = db.state.find_one({"_id": "schedule_time", "awaiting_time": True})
         if sched:
             try:
                 await _finish_schedule(int(sched["draft"]), int(sched["jy"]), int(sched["jm"]), int(sched["jd"]), text)
                 db.state.delete_one({"_id": "schedule_time"})
+                await bale.edit_message_keyboard(sched["chat_id"], sched["message_id"], KB(int(sched["draft"])))
             except Exception:
-                db.state.update_one({"_id": "schedule_time"}, {"$set": sched}, upsert=True)
                 await bale.send_message(config.ADMIN_ID, "❌ ساعت معتبر نیست یا زمان گذشته است. ساعت را مثل ۱۸:۳۰ وارد کن.")
         else:
             st = db.state.find_one_and_delete({"_id": "edit"})
