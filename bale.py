@@ -21,9 +21,10 @@ async def send_message(chat_id, text, keyboard=None, reply_keyboard=None, parse_
         p["reply_markup"] = {"keyboard": [[{"text": t} for t in row] for row in reply_keyboard], "resize_keyboard": True}
     return await call("sendMessage", **p)
 
-async def send_photo(chat_id, png: bytes, caption="", keyboard=None):
+async def send_photo(chat_id, png: bytes, caption="", keyboard=None, parse_mode=None):
     import json
     data = {"chat_id": str(chat_id), "caption": caption[:1000]}
+    if parse_mode: data["parse_mode"] = parse_mode
     if keyboard: data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{BASE}/sendPhoto", data=data, files={"photo": ("news.png", png, "image/png")})

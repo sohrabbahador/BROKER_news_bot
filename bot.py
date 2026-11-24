@@ -283,20 +283,32 @@ async def make_draft(title, body, source_name, official, url="", min_score=0):
     return True
 
 async def show_draft(d, suspect=None):
+    """ابتدا کارت واقعی را فقط برای مدیر پیش‌نمایش می‌کند؛ دکمه انتشار روی همان تصویر است."""
     cap = d.get("custom_caption") or build_caption(d)
     warn = ""
     if suspect:
         warn = f"\n\n⚠️ این عددها در متن مبدأ پیدا نشد؛ قبل از انتشار حتماً بررسی کنید: {', '.join(suspect)}"
-    head = f"📝 پیش‌نویس #{d['_id']} | ⭐ اهمیت {d.get('importance', 3)}/5"
+    head = f"📝 پیش‌نمایش تصویری خبر #{d['_id']} | ⭐ اهمیت {d.get('importance', 3)}/5"
     admin_text = build_admin_caption(d) if not d.get("custom_caption") else build_admin_caption(d) + "\n\n✏️ متن ویرایش‌شده:\n" + _safe(cap)
-    await bale.send_message(config.ADMIN_ID, f"{head}\n\n{admin_text}{warn}", KB(d["_id"]), parse_mode="HTML")
+    preview_caption = f"{head}\n\n{admin_text}{warn}"
+    result = await bale.send_photo(
+        config.ADMIN_ID, _card(d), caption=preview_caption,
+        keyboard=KB(d["_id"]), parse_mode="Markdown"
+    )
+    if result and result.get("ok"):
+        db.drafts.update_one({"_id": d["_id"], "status": "draft"},
+                             {"$set": {"preview_sent": True, "preview_sent_at": time.time()}})
+    else:
+        await bale.send_message(config.ADMIN_ID,
+            f"❌ پیش‌نمایش تصویری خبر #{d['_id']} ارسال نشد؛ تا زمان مشاهده تصویر، امکان انتشار فعال نیست.")
 
 async def publish(d):
     cap = build_caption(d)
     if d.get("custom_caption"):
         edited = _clean_text(d["custom_caption"]).strip()
         cap = f"*{str(d.get('headline', '')).replace('*', '')}*\n\n{edited}"
-    return await bale.send_message(config.CHANNEL_ID, cap, parse_mode="Markdown")
+    image_bytes = _card(d)
+    return await bale.send_photo(config.CHANNEL_ID, image_bytes, caption=cap, parse_mode="Markdown")
 
 # ---------- پایش منابع ----------
 async def process_items(src, items, bodies=None, limit=5):
@@ -406,6 +418,10 @@ async def handle_callback(cb):
             message_id = msg.get("message_id")
             if action == "schedule":
                 draft_id = int(sid)
+                draft = db.drafts.find_one({"_id": draft_id, "status": "draft"})
+                if not draft or not draft.get("preview_sent"):
+                    await bale.answer_callback(cb["id"], "ابتدا باید تصویر پیش‌نمایش را دریافت و مشاهده کنی")
+                    return
                 state = {"draft": draft_id, "chat_id": chat_id, "message_id": message_id}
                 db.state.update_one({"_id": "schedule_time"}, {"$set": state}, upsert=True)
                 await _schedule_menu(state)
@@ -477,6 +493,9 @@ async def handle_callback(cb):
     d = db.drafts.find_one({"_id": int(sid)}) if sid.isdigit() else None
     if not d or d["status"] != "draft":
         await bale.answer_callback(cb["id"], "این پیش‌نویس دیگر فعال نیست"); return
+    if action in ("now", "ok") and not d.get("preview_sent"):
+        await bale.answer_callback(cb["id"], "ابتدا باید تصویر پیش‌نمایش را دریافت و مشاهده کنی")
+        return
     if action == "schedule":
         db.state.update_one({"_id": "schedule_time"}, {"$set": {"draft": d["_id"]}}, upsert=True)
         await bale.answer_callback(cb["id"])
