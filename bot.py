@@ -381,7 +381,11 @@ async def diagnose():
             r, t = await sources.fetch(src["url"])
             items = await sources.list_items(src)
             _, feeds = sources.extract_links(r.text, src["url"])
-            lines.append(f"{'✅' if r.status_code == 200 else '⚠️'} {src['name']}: کد {r.status_code} | {t}s | {len(items)} خبر | RSS: {'دارد' if feeds else 'ندارد'}")
+            # فیدهای مستقیم RSS ممکن است در HTML تگ link نداشته باشند؛
+            # محتوای XML خود آدرس منبع را هم بررسی می‌کنیم.
+            direct_feed_items = sources.parse_feed(r.text)
+            has_rss = bool(feeds) or bool(direct_feed_items)
+            lines.append(f"{'✅' if r.status_code == 200 else '⚠️'} {src['name']}: کد {r.status_code} | {t}s | {len(items)} خبر | RSS: {'دارد' if has_rss else 'ندارد'}")
             for it in items[:3]:
                 lines.append(f"   • {it['title'][:70]}")
         except Exception as e:
