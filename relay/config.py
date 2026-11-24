@@ -20,9 +20,10 @@ SOURCES = [
     {"key": "ssaa", "name": "سازمان ثبت اسناد و املاک کشور", "url": _e("NEWS_URL_SSAA", "https://www.ssaa.ir"), "official": True},
     {"key": "tax", "name": "سازمان امور مالیاتی", "url": _e("NEWS_URL_TAX", "https://www.intamedia.ir"), "official": True},
     {"key": "mehr", "name": "خبرگزاری مهر (بخش مسکن)", "url": _e("NEWS_URL_MEHR", "https://www.mehrnews.com/service/markets/Housing"), "official": False},
+    {"key": "irib", "name": "خبرگزاری صدا و سیما", "url": _e("NEWS_URL_IRIB", "https://www.irib-news.ir/fa/rss/allnews?"), "official": False},
 ]
 
-_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,mrud_tg,mrud_eitaa,mrud_bale").split(",") if x.strip()]
+_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,mrud_tg,mrud_eitaa,mrud_bale,irib").split(",") if x.strip()]
 for _s in SOURCES:
     _s["relay"] = _s["key"] in _RELAY      # این منبع‌ها از رله‌ی داخل ایران می‌آیند، نه مستقیم از Render
 
