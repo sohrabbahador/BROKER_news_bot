@@ -140,6 +140,19 @@ async def list_items(src: dict):
     r.raise_for_status()
     if src.get("platform"):
         return extract_channel_items(r.text, src)
+
+    # آدرس‌های مستقیم RSS را به‌جای تجزیه به‌عنوان HTML، مستقیماً XML بخوان.
+    content_type = (r.headers.get("content-type") or "").lower()
+    looks_like_feed = (
+        "xml" in content_type
+        or "rss" in src["url"].lower()
+        or "feed" in src["url"].lower()
+    )
+    if looks_like_feed:
+        feed_items = parse_feed(r.text)
+        if feed_items:
+            return feed_items
+
     items, feeds = extract_links(r.text, src["url"])
     if feeds:
         try:
