@@ -26,9 +26,9 @@ SOURCES = [
     {"key": "amar", "name": "مرکز آمار ایران", "url": _e("NEWS_URL_AMAR", "https://www.amar.org.ir"), "official": True},
     {"key": "mehr", "name": "خبرگزاری مهر (بخش مسکن)", "url": _e("NEWS_URL_MEHR", "https://www.mehrnews.com/service/markets/Housing"), "official": False, "topic": True},
     {"key": "irib", "name": "خبرگزاری صدا و سیما", "url": _e("NEWS_URL_IRIB", "https://www.irib-news.ir/fa/rss/allnews?"), "official": False},
-    {"key": "irna", "name": "خبرگزاری ایرنا", "url": _e("NEWS_URL_IRNA", "https://www.irna.ir"), "official": False},
-    {"key": "isna", "name": "خبرگزاری ایسنا", "url": _e("NEWS_URL_ISNA", "https://www.isna.ir"), "official": False},
-    {"key": "tasnim", "name": "خبرگزاری تسنیم", "url": _e("NEWS_URL_TASNIM", "https://www.tasnimnews.com/fa"), "official": False},
+    {"key": "irna", "name": "خبرگزاری ایرنا", "url": _e("NEWS_URL_IRNA", "https://www.irna.ir/rss"), "official": False},
+    {"key": "isna", "name": "خبرگزاری ایسنا", "url": _e("NEWS_URL_ISNA", "https://www.isna.ir/rss"), "official": False},
+    {"key": "tasnim", "name": "خبرگزاری تسنیم", "url": _e("NEWS_URL_TASNIM", "https://www.tasnimnews.ir/fa/rss/feed/0/0/8/1/TopStories"), "official": False},
 ]
 
 for _i, _x in enumerate([p for p in _e("EXTRA_SOURCES").split(";") if "|" in p], 1):
