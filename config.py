@@ -12,7 +12,8 @@ GEMINI_MODEL = _e("GEMINI_MODEL", "gemini-3.8-flash")
 POLL_SECONDS = max(60, int(_e("POLL_SECONDS", "180")))
 MIN_SCORE = int(_e("MIN_SCORE", "3"))      # خبرهای کم‌اهمیت‌تر از این به مدیر نمی‌رسند (۱ تا ۵)
 RELAY_SECRET = _e("RELAY_SECRET")
-SIGNATURE = _e("CHANNEL_SIGNATURE", "🏠 بروکر املاک")
+PUBLIC_SIGNATURE = _e("PUBLIC_SIGNATURE", "⚖️ سهراب بهادر | بروکر املاک\n🆔 @BROKER_amlak\n📱 09123692401\n📱 09003692401").replace("\\n", "\n")
+SEND_IMAGES = _e("SEND_IMAGES", "off").lower() in ("on", "1", "true", "yes")   # فعلاً خاموش؛ کد پوستر نگه داشته شده
 
 # ردیف اول (رسمی) = 🟢 ؛ سیگنال رسانه‌ای = 🟡
 SOURCES = [
@@ -35,13 +36,22 @@ for _i, _x in enumerate([p for p in _e("EXTRA_SOURCES").split(";") if "|" in p],
     _n, _u = _x.split("|", 1)                      # EXTRA_SOURCES="نام|آدرس;نام|آدرس"
     SOURCES.append({"key": f"x{_i}", "name": _n.strip(), "url": _u.strip(), "official": False})
 
-_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,cbi,amar,mrud_tg,mrud_eitaa,mrud_bale,irib").split(",") if x.strip()]
+# منبع‌های سایت‌های ایرانی از رله‌ی داخل ایران می‌آیند؛ تلگرام و خبرگزاری‌ها مستقیم از Render خوانده می‌شوند.
+_RELAY = [x.strip() for x in _e("RELAY_SOURCES", "mrud,ssaa,tax,cbi,amar,irib").split(",") if x.strip()]
+# منبع‌های تأییدنشده (ایتا/بله) تا وقتی آدرس و ساختار صفحه‌شان بررسی نشده خاموش‌اند.
+_DISABLED = {x.strip() for x in _e("DISABLED_SOURCES", "mrud_eitaa,mrud_bale").split(",") if x.strip()}
 for _s in SOURCES:
-    _s["relay"] = _s["key"] in _RELAY      # این منبع‌ها از رله‌ی داخل ایران می‌آیند، نه مستقیم از Render
+    _s["relay"] = _s["key"] in _RELAY
+    _s["disabled"] = _s["key"] in _DISABLED
 
-KEYWORDS = ["مسکن", "اجاره", "رهن", "مستأجر", "مستاجر", "املاک", "ملک", "مالیات", "سند", "کدرهگیری", "کد رهگیری",
-            "وام", "معامله", "زمین", "شهرسازی", "ساخت", "خانه", "آپارتمان", "قرارداد", "اجاره‌بها", "اجاره بها",
-            "نقل و انتقال", "نقل‌وانتقال", "بنگاه", "مشاور", "تسهیلات", "ودیعه"]
+KEYWORDS = ["مسکن", "اجاره", "رهن", "مستأجر", "مستاجر", "املاک", "ملک", "مالکیت", "آپارتمان", "اجاره‌بها", "اجاره بها",
+            "اجاره‌نامه", "قولنامه", "قرارداد اجاره", "کدرهگیری", "کد رهگیری", "سند ملکی", "سند رسمی", "سند مالکیت",
+            "سند تک‌برگ", "سند تک برگ", "ثبت اسناد", "ثبت املاک", "وام مسکن", "وام ودیعه", "وام اجاره", "وام خرید",
+            "وام ساخت", "تسهیلات مسکن", "ودیعه", "نهضت ملی", "مسکن ملی", "ساخت‌وساز", "ساخت و ساز", "ساختمان",
+            "شهرسازی", "شهر جدید", "شهرهای جدید", "بنگاه", "مشاور املاک", "مشاوران املاک", "معاملات مسکن",
+            "معامله ملک", "معاملات ملکی", "نقل و انتقال", "نقل‌وانتقال", "زمین و مسکن", "قیمت مسکن", "بازار مسکن",
+            "بازار ملک", "پیش‌فروش", "پیش فروش", "مالیات اجاره", "مالیات خانه", "خانه خالی", "خانه‌های خالی",
+            "عایدی سرمایه", "مالیات نقل"]
 REQUIRED_ENV = ["BALE_TOKEN", "ADMIN_ID", "CHANNEL_ID", "MONGODB_URI"]
 
 def missing_env():

@@ -1,5 +1,5 @@
 """تحلیل خبر با Gemini + کنترل عددها (هر عدد خروجی باید در متن مبدأ باشد)."""
-import re
+import asyncio, re
 import httpx
 import config
 
@@ -13,11 +13,23 @@ def numbers(s):
 def unsupported_numbers(source: str, output: str):
     return sorted(numbers(output) - numbers(source))
 
-SYSTEM = ("تو سردبیر کانال خبری املاک هستی. فقط از متن خبر استفاده کن. هیچ عدد، تاریخ، درصد یا نامی که در متن نیست ننویس. "
-          "فارسی روان و ساده بنویس. نام و سمت گوینده/صادرکننده اصلی خبر را فقط اگر صریحاً در متن آمده استخراج کن؛ منظور وزیر، رئیس سازمان، رئیس اتحادیه، سخنگو یا مقام صادرکننده دستور/اظهارنظر است، نه خبرنگار، نویسنده یا رسانه. هرگز نام یا سمت را حدس نزن. اگر مشخص نیست بنویس: گوینده: نامشخص. خروجی را دقیقاً با این پنج بخش بده و چیز دیگری اضافه نکن:\n"
-          "تیتر: (حداکثر ۹ کلمه)\nگوینده: (نام و سمت مقام اصلی، یا نامشخص)\nخلاصه: (حداکثر ۳ جمله)\nبرای مردم یعنی: (۱ تا ۲ جمله برای خریدار، فروشنده یا مستأجر؛ اگر مطمئن نیستی بنویس «جزئیات بیشتر هنوز اعلام نشده»)\n"
-          "اهمیت: (فقط یک عدد ۱ تا ۵. ۵ = تغییر قانون، مالیات، وام یا هزینه که مستقیم روی خریدار، فروشنده یا مستأجر اثر دارد. ۳ = مفید برای مخاطب ملکی. ۱ = بی‌ربط، تشریفاتی یا تکراری)")
-
+SYSTEM = (
+    "تو سردبیر کانال خبری «املاک و مسکن» هستی. فقط از متن خبر استفاده کن؛ هیچ عدد، تاریخ، نام یا ادعایی که در متن نیست ننویس و چیزی را حدس نزن. فارسی روان و ساده بنویس.\n"
+    "خروجی را دقیقاً با این شش خط بده، هر کدام در یک خط جدا و بدون هیچ متن یا علامت اضافه:\n"
+    "مرتبط: بله یا خیر\n"
+    "تیتر: ...\n"
+    "نسبت‌دهی: ...\n"
+    "خلاصه: ...\n"
+    "خلاصه که: ...\n"
+    "اهمیت: ...\n\n"
+    "قواعد:\n"
+    "مرتبط = «بله» فقط اگر خبر مستقیماً درباره‌ی مسکن، خرید و فروش یا اجاره‌ی ملک، رهن، وام و تسهیلات مسکن، مالیات و عوارض ملک، سند و ثبت املاک و کدرهگیری، ساخت‌وساز و شهرسازی، قیمت و بازار ملک، طرح‌های مسکن دولتی (مثل نهضت ملی مسکن) یا قانون و دستوری باشد که روی مالک، خریدار، فروشنده یا مستأجر اثر دارد؛ حتی اگر از قوه قضاییه، دادستانی یا بانک مرکزی باشد. ورزش، سیاست، امنیت و دفاع، فرهنگ و هنر، سلامت، حوادث، اقتصاد عمومی (دلار، طلا، بورس) و راه و ترابری بدون ارتباط مستقیم با مسکن = «خیر».\n"
+    "تیتر = حداکثر ۹ کلمه.\n"
+    "نسبت‌دهی = یک عبارت کوتاه (حداکثر ۱۰ کلمه) که بگوید خبر یا دستور از کیست، فقط بر اساس متن؛ فرد یا نهاد، مثلاً «به دستور قوه قضاییه»، «به گفتهٔ وزیر راه و شهرسازی»، «بر اساس اعلام سازمان ثبت»، «طبق مصوبهٔ هیئت وزیران». خبرنگار، نویسنده و رسانه حساب نمی‌شوند. اگر فرد و نهاد هر دو در متن هست هر دو را بنویس. اگر واقعاً در متن نیست فقط بنویس: نامشخص\n"
+    "خلاصه = حداکثر ۳ جمله، فقط واقعیت‌های متن.\n"
+    "خلاصه که = ۱ تا ۲ جمله: نتیجه‌ی عملی برای خواننده (خریدار، فروشنده، مالک یا مستأجر) که مستقیم از واقعیت‌های همین متن گرفته شود. اگر متن برای نتیجه‌گیری کافی نیست فقط بنویس: ندارد\n"
+    "اهمیت = فقط یک عدد ۱ تا ۵. ۵ = تغییر قانون، مالیات، وام یا هزینه که مستقیم روی خریدار، فروشنده یا مستأجر اثر دارد. ۳ = مفید برای مخاطب ملکی. ۱ = تشریفاتی یا تکراری."
+)
 LAST_ERROR = ""
 
 async def gemini(prompt: str, system="", max_tokens=500):
@@ -46,27 +58,51 @@ async def gemini(prompt: str, system="", max_tokens=500):
         LAST_ERROR = f"{type(e).__name__}: {str(e)[:120]}"
         return None
 
+_LABELS = ("خلاصه که", "نسبت‌دهی", "نسبت دهی", "مرتبط", "تیتر", "خلاصه", "اهمیت")
+_LINE = re.compile(r"^\s*(?:[-•]\s*)?(" + "|".join(_LABELS) + r")\s*[:：]\s*(.*)$")
+
 def parse_sections(txt: str):
-    def grab(label, nxt):
-        m = re.search(rf"{label}\s*[:：]\s*(.+?)(?=\n\s*(?:{nxt})\s*[:：]|\Z)", txt, re.S)
-        return m.group(1).strip() if m else ""
-    m = re.search(r"اهمیت\s*[:：]\s*([1-5۱-۵])", txt)
-    imp = int(norm(m.group(1))) if m else 3
-    return {"headline": grab("تیتر", "گوینده|خلاصه|برای مردم یعنی|اهمیت"),
-            "speaker": grab("گوینده", "تیتر|خلاصه|برای مردم یعنی|اهمیت"),
-            "summary": grab("خلاصه", "گوینده|برای مردم یعنی|تیتر|اهمیت"),
-            "meaning": grab("برای مردم یعنی", "تیتر|گوینده|خلاصه|اهمیت"),
-            "importance": imp}
+    """خروجی مدل را خط‌به‌خط می‌خواند (حتی اگر مدل ستاره/تیتر مارک‌داون اضافه کرده باشد)."""
+    fields, cur = {}, None
+    for raw in (txt or "").replace("*", "").replace("#", "").splitlines():
+        m = _LINE.match(raw)
+        if m:
+            cur = {"نسبت دهی": "نسبت‌دهی"}.get(m.group(1), m.group(1))
+            fields[cur] = m.group(2).strip()
+        elif cur and raw.strip():
+            fields[cur] = (fields[cur] + " " + raw.strip()).strip()
+    rel = fields.get("مرتبط", "").strip()
+    related = True if rel.startswith("بله") else False if rel.startswith("خیر") else None
+    m = re.search(r"[1-5۱-۵]", fields.get("اهمیت", ""))
+    meaning = fields.get("خلاصه که", "").strip()
+    if meaning.strip(" .") == "ندارد" or "اعلام نشده" in meaning:
+        meaning = ""
+    speaker = fields.get("نسبت‌دهی", "").strip().rstrip(":：").strip()
+    return {"related": related, "headline": fields.get("تیتر", "").strip(), "speaker": speaker or "نامشخص",
+            "summary": fields.get("خلاصه", "").strip(), "meaning": meaning,
+            "importance": int(norm(m.group(0))) if m else 3}
 
 def fallback(title: str, body: str):
-    sents = [s.strip() for s in re.split(r"(?<=[.!؟?])\s+", body) if len(s.strip()) > 20][:2]
-    return {"headline": title[:80], "speaker": "نامشخص", "summary": " ".join(sents) or title, "meaning": "جزئیات بیشتر هنوز اعلام نشده.", "importance": 3}
+    """وقتی هوش مصنوعی جواب نداد: خلاصه = جمله‌های اول خود خبر، بدون «خلاصه که» و بدون نسبت‌دهی ساختگی."""
+    sents = [s.strip() for s in re.split(r"(?<=[.!؟?])\s+", body or "") if len(s.strip()) > 20][:2]
+    return {"related": None, "headline": title[:80], "speaker": "نامشخص", "summary": " ".join(sents) or title,
+            "meaning": "", "importance": 3}
 
 async def analyze(title: str, body: str):
+    """نتیجه: related (True/False/None=نامعلوم)، ai_failed، و فیلدهای متنی. دو بار تلاش می‌کند."""
     src = f"{title}\n{body}"
-    out = await gemini(f"عنوان: {title}\n\nمتن خبر:\n{body or title}", SYSTEM)
-    data = parse_sections(out) if out else {}
-    if not data.get("summary"):
+    data = {}
+    for attempt in range(2):
+        out = await gemini(f"عنوان: {title}\n\nمتن خبر:\n{body or title}", SYSTEM)
+        data = parse_sections(out) if out else {}
+        if data.get("summary") and data.get("related") is not None:
+            break
+        if attempt == 0:
+            await asyncio.sleep(2)
+    ai_failed = not (data.get("summary") and data.get("related") is not None)
+    if ai_failed:
         data = fallback(title, body)
-    data["suspect_numbers"] = unsupported_numbers(src, " ".join(str(v) for k, v in data.items() if k != "importance"))
+    data["ai_failed"] = ai_failed
+    data["ai_error"] = LAST_ERROR if ai_failed else ""
+    data["suspect_numbers"] = unsupported_numbers(src, " ".join(str(data.get(k, "")) for k in ("headline", "speaker", "summary", "meaning")))
     return data

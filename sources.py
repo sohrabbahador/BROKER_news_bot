@@ -59,8 +59,11 @@ def parse_feed(xml_text: str):
             if title and link: out.append({"title": title, "url": link})
     return out
 
+_VOID = {"br", "img", "hr", "input", "meta", "link", "source", "wbr", "area", "base", "col", "embed", "param", "track"}
+
 class _ChannelPosts(HTMLParser):
-    """استخراج متن پست‌های قابل مشاهده در صفحات عمومی کانال‌ها."""
+    """استخراج متن پست‌های قابل مشاهده در صفحات عمومی کانال‌ها (بدون ورود به حساب).
+    تگ‌های بدون بسته‌شدن (br, img, ...) شمارش عمق را به‌هم نمی‌زنند."""
     TARGETS = {"message-text", "message_body", "message-body", "post-text", "post-content",
                "message_content", "message-content", "text-content", "message__text", "post-body"}
     def __init__(self, platform, channel_url):
@@ -68,19 +71,23 @@ class _ChannelPosts(HTMLParser):
         self.posts = []; self.depth = 0; self.wrapper = None; self.capture_depth = None
         self.parts = []; self.post_url = channel_url
     def handle_starttag(self, tag, attrs):
+        if tag in _VOID:
+            if self.capture_depth is not None and tag == "br":
+                self.parts.append(" ")
+            return
         self.depth += 1
         a = dict(attrs); classes = set((a.get("class") or "").split())
         if self.platform == "telegram" and "tgme_widget_message_wrap" in classes:
             self.wrapper = self.depth
-            self.post_url = "https://t.me/" + a.get("data-post", "") if a.get("data-post") else self.channel_url
+            self.post_url = ("https://t.me/" + a["data-post"]) if a.get("data-post") else self.channel_url
         is_text = ("tgme_widget_message_text" in classes) if self.platform == "telegram" else bool(classes & self.TARGETS)
         if is_text and self.capture_depth is None:
             self.capture_depth = self.depth; self.parts = []
-        if self.capture_depth is not None and tag == "a" and a.get("href") and self.platform == "telegram":
-            if a["href"].startswith("https://t.me/"): self.post_url = a["href"]
     def handle_data(self, data):
         if self.capture_depth is not None and data.strip(): self.parts.append(data.strip())
     def handle_endtag(self, tag):
+        if tag in _VOID:
+            return
         if self.capture_depth == self.depth:
             txt = re.sub(r"\s+", " ", " ".join(self.parts)).strip()
             if len(txt) >= 35:
@@ -91,14 +98,17 @@ class _ChannelPosts(HTMLParser):
         self.depth = max(0, self.depth - 1)
 
 def extract_channel_items(html: str, src: dict):
-    """پست‌های عمومی تلگرام/ایتا/بله؛ بدون ورود به حساب یا دسترسی خصوصی."""
+    """پست‌های عمومی تلگرام/ایتا/بله. اگر پست لینک اختصاصی نداشت، یک شناسه‌ی یکتا از متنش ساخته می‌شود
+    (وگرنه همه‌ی پست‌ها شناسه‌ی یکسان کانال را می‌گرفتند و فقط اولی پردازش می‌شد)."""
     p = _ChannelPosts(src.get("platform"), src["url"]); p.feed(html)
     unique, seen = [], set()
     for item in p.posts:
-        key = item["url"] if item["url"] != src["url"] else item["body"][:250]
-        if key not in seen:
-            seen.add(key); unique.append(item)
+        if item["url"] == src["url"]:
+            item["url"] = f"{src['url'].rstrip('/')}#{hashlib.sha1(item['body'].encode()).hexdigest()[:12]}"
+        if item["url"] not in seen:
+            seen.add(item["url"]); unique.append(item)
     return unique
+
 
 class _Text(HTMLParser):
     SKIP = {"script", "style", "nav", "header", "footer", "aside", "form"}
@@ -119,21 +129,34 @@ def extract_text(html: str, limit=4500) -> str:
     return txt[:limit]
 
 _KW = None
+_SUFFIX = r"(?:ها|های|ی|ای|ان|ات)?"
 def is_relevant(title: str) -> bool:
-    """کلمه باید ابتدای یک واژه باشد (تا «خانه» داخل «وزارتخانه» را نگیرد)."""
+    """پیش‌فیلتر سریع (تصمیم نهایی با هوش مصنوعی است): عبارت باید یک واژه‌ی کامل باشد، نه بخشی از واژه‌ی دیگر
+    (مثلاً «زمینه»، «ساختار» یا «خانه» داخل «وزارتخانه» را نگیرد)."""
     global _KW
     if _KW is None:
-        _KW = re.compile(r"(?<![\u0600-\u06FF])(?:" + "|".join(re.escape(k) for k in config.KEYWORDS) + ")")
+        L = r"[\u0600-\u06FF\w]"
+        kws = sorted(config.KEYWORDS, key=len, reverse=True)
+        _KW = re.compile(r"(?<!" + L + r")(?:" + "|".join(re.escape(k) for k in kws) + r")" + _SUFFIX + r"(?!" + L + r")")
     return bool(_KW.search(title))
 
 def uid(url: str) -> str:
     return hashlib.sha1(url.encode()).hexdigest()[:16]
 
 async def fetch(url: str, timeout=20):
+    """اول با اعتبارسنجی کامل گواهی؛ فقط اگر سایت (معمولاً سایت دولتی) گواهی ناقص داشت، بدون آن دوباره تلاش می‌شود."""
     import httpx
-    async with httpx.AsyncClient(timeout=timeout, headers=UA, follow_redirects=True, verify=False) as c:
-        t = time.time(); r = await c.get(url)
-        return r, round(time.time() - t, 1)
+    async def _get(verify):
+        async with httpx.AsyncClient(timeout=timeout, headers=UA, follow_redirects=True, verify=verify) as c:
+            t = time.time(); r = await c.get(url)
+            return r, round(time.time() - t, 1)
+    try:
+        return await _get(True)
+    except Exception as e:
+        msg = str(e).lower()
+        if "certificate" in msg or "ssl" in msg:
+            return await _get(False)
+        raise
 
 async def list_items(src: dict):
     r, _ = await fetch(src["url"])

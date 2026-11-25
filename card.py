@@ -157,9 +157,7 @@ def make_card(headline: str, summary: str, source: str, official: bool,
     d.rectangle((0, footer_top, W, H), fill=GREEN)
     d.rectangle((0, footer_top, W, footer_top + 7), fill=GOLD)
 
-    source_text = ("منبع: " + str(source or "خبرگزاری"))[:100]
-    source_font = _font(25, False)
-    _draw_rtl(d, W - 82, footer_top + 34, source_text, source_font, (225, 231, 225))
+    # نام منبع عمداً روی پوستر چاپ نمی‌شود (فقط برای مدیر در پیش‌نویس دیده می‌شود)
 
     # امضای ثابت؛ فونت نستعلیق در فایل‌های ورودی وجود ندارد، بنابراین از فونت فارسی موجود استفاده می‌شود.
     sign_font = _font(43, True)

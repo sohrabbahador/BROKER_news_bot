@@ -6,7 +6,7 @@
 """
 import re
 import config
-from analyze import norm
+from jalali import fa_to_en as norm
 
 def clean_text(value):
     """نویسه‌های خط جدیدِ خام (\\n) را به خط جدید واقعی تبدیل می‌کند و خط‌های خالی اضافه را جمع می‌کند."""
@@ -46,9 +46,9 @@ def public_text(d):
         parts.append(custom)
     else:
         summary = plain(d.get("summary"))
-        speaker = plain(d.get("speaker"))
+        attribution = plain(d.get("speaker")).rstrip(":：").strip()   # مثل «به دستور قوه قضاییه»؛ نامشخص = اصلاً چاپ نمی‌شود
         if summary:
-            parts.append(f"به گفتهٔ {speaker}:\n{summary}" if speaker and speaker != "نامشخص" else summary)
+            parts.append(f"{attribution}:\n{summary}" if attribution and attribution != "نامشخص" else summary)
         if has_meaning(d.get("meaning")):
             parts.append(f"💡 *خلاصه که؛*\n{plain(d.get('meaning'))}")
     parts.append(config.PUBLIC_SIGNATURE)
@@ -61,6 +61,7 @@ def admin_text(d, warn=""):
     if d.get("url"):
         lines.append(f"🔗 {short_url(d['url'])}")
     if d.get("ai_failed"):
-        lines.append("⚠️ تحلیل هوش مصنوعی انجام نشد؛ خلاصه از جمله‌های اول خود خبر است. قبل از انتشار بخوانید.")
+        why = f" ({d['ai_error'][:80]})" if d.get("ai_error") else ""
+        lines.append(f"⚠️ تحلیل هوش مصنوعی انجام نشد{why}؛ خلاصه از جمله‌های اول خود خبر است و «خلاصه که» ندارد. قبل از انتشار بخوانید.")
     head = "\n".join(lines)
     return f"📝 پیش‌نویس #{d['_id']}\n{head}\n━━━━━━━━━━\n{public_text(d)}{warn}"

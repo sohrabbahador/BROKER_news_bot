@@ -11,20 +11,20 @@ async def call(method, **payload):
     except Exception:
         return {"ok": False, "description": f"HTTP {r.status_code}"}
 
-async def send_message(chat_id, text, keyboard=None, reply_keyboard=None, parse_mode=None):
-    """keyboard = دکمه‌های زیر پیام (inline)؛ reply_keyboard = کلیدهای ثابت پایین صفحه‌ی چت."""
+async def send_message(chat_id, text, keyboard=None, reply_keyboard=None):
+    """keyboard = دکمه‌های زیر پیام (inline)؛ reply_keyboard = کلیدهای ثابت پایین صفحه‌ی چت.
+    parse_mode عمداً ارسال نمی‌شود: در بله فقط «*متن*» بولد می‌شود و بدون parse_mode هم کار می‌کند؛
+    بنابراین هیچ نویسه‌ای (مثل _ یا ` در متن خبر) نمی‌تواند باعث رد شدن پیام شود."""
     p = {"chat_id": chat_id, "text": text[:4000]}
-    if parse_mode: p["parse_mode"] = parse_mode
     if keyboard:
         p["reply_markup"] = {"inline_keyboard": keyboard}
     elif reply_keyboard:
         p["reply_markup"] = {"keyboard": [[{"text": t} for t in row] for row in reply_keyboard], "resize_keyboard": True}
     return await call("sendMessage", **p)
 
-async def send_photo(chat_id, png: bytes, caption="", keyboard=None, parse_mode=None):
+async def send_photo(chat_id, png: bytes, caption="", keyboard=None):
     import json
     data = {"chat_id": str(chat_id), "caption": caption[:1000]}
-    if parse_mode: data["parse_mode"] = parse_mode
     if keyboard: data["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(f"{BASE}/sendPhoto", data=data, files={"photo": ("news.png", png, "image/png")})

@@ -43,4 +43,5 @@ async def keepalive():
 async def startup():
     asyncio.create_task(bot.poll_updates())
     asyncio.create_task(bot.scheduler())
+    asyncio.create_task(bot.schedule_runner())
     asyncio.create_task(keepalive())
