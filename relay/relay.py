@@ -2,19 +2,38 @@
 سایت‌های دولتی را می‌خواند و فقط خبرهای جدید را به ربات می‌فرستد. فقط کتابخانه‌ی استاندارد پایتون.
 اجرا:  BOT_URL=https://xxx.onrender.com RELAY_SECRET=... python relay.py        (هر ۵ دقیقه با cron / حلقه‌ی داخلی)
 """
-import json, os, sys, time, urllib.request
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import json, os, ssl, sys, time, urllib.error, urllib.request
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))        # config.py و sources.py اصلیِ پروژه (بدون کپی جدا که با آن‌ها ناهماهنگ شود)
 import sources, config
 
 BOT_URL = os.getenv("BOT_URL", "").rstrip("/")
 SECRET = os.getenv("RELAY_SECRET", "")
 STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "relay_seen.json")
 EVERY = int(os.getenv("RELAY_EVERY", "300"))
-RELAY_KEYS = [s for s in config.SOURCES if s["official"]]
+RELAY_KEYS = [s for s in config.SOURCES if s.get("relay") and not s.get("disabled")]   # دقیقاً همان منبع‌هایی که ربات منتظر رله‌شان است
 
 def get(url, timeout=25):
+    """اول با اعتبارسنجی گواهی؛ فقط اگر سایت (معمولاً دولتی) گواهی ناقص داشت بدون آن."""
     req = urllib.request.Request(url, headers=sources.UA)
-    return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+    try:
+        return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+    except (ssl.SSLError, urllib.error.URLError) as e:
+        if "certificate" not in str(e).lower() and "ssl" not in str(e).lower():
+            raise
+        ctx = ssl._create_unverified_context()
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx).read().decode("utf-8", "ignore")
+
+def list_items(src, html):
+    if src.get("platform"):
+        return sources.extract_channel_items(html, src)
+    head = html[:600].lower()
+    if "<rss" in head or "<feed" in head or "<?xml" in head:
+        feed = sources.parse_feed(html)
+        if feed:
+            return feed
+    return sources.extract_links(html, src["url"])[0]
 
 def post(payload):
     req = urllib.request.Request(BOT_URL + "/relay", data=json.dumps(payload).encode(), method="POST",
@@ -26,7 +45,7 @@ def run_once():
     for src in RELAY_KEYS:
         try:
             html = get(src["url"])
-            items = sources.extract_channel_items(html, src) if src.get("platform") else sources.extract_links(html, src["url"])[0]
+            items = list_items(src, html)
             new = [i for i in items if sources.uid(i["url"]) not in seen]
             send = []
             for it in new[:15]:
