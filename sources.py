@@ -111,22 +111,49 @@ def extract_channel_items(html: str, src: dict):
 
 
 class _Text(HTMLParser):
-    SKIP = {"script", "style", "nav", "header", "footer", "aside", "form"}
+    """استخراج متن مقاله با حذف بخش‌های ناوبری و اولویت محدوده محتوای خبر."""
+    SKIP = {"script", "style", "nav", "header", "footer", "aside", "form", "noscript", "svg"}
+    CONTENT_HINTS = ("article", "content", "story", "detail", "post", "news", "text")
     def __init__(self):
-        super().__init__(); self.parts, self.skip, self.in_p = [], 0, False
+        super().__init__(); self.stack = []; self.paragraphs = []; self.current = None; self.skip_depth = 0
     def handle_starttag(self, tag, attrs):
-        if tag in self.SKIP: self.skip += 1
-        if tag == "p": self.in_p = True
+        a = dict(attrs); classes = (a.get("class") or "").lower(); ident = (a.get("id") or "").lower()
+        hint = any(x in classes or x in ident for x in self.CONTENT_HINTS)
+        parent_content = any(x[1] for x in self.stack)
+        is_content = tag in {"article", "main"} or hint or parent_content
+        self.stack.append((tag, is_content))
+        if tag in self.SKIP: self.skip_depth += 1
+        if tag == "p" and not self.skip_depth:
+            self.current = {"parts": [], "priority": int(parent_content or tag in {"article", "main"})}
+        elif tag == "br" and self.current is not None and not self.skip_depth:
+            self.current["parts"].append(" ")
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs); self.handle_endtag(tag)
+    def handle_data(self, data):
+        if self.current is not None and not self.skip_depth and data.strip(): self.current["parts"].append(data.strip())
     def handle_endtag(self, tag):
-        if tag in self.SKIP and self.skip: self.skip -= 1
-        if tag == "p": self.in_p = False
-    def handle_data(self, d):
-        if self.in_p and not self.skip and d.strip(): self.parts.append(d.strip())
+        if tag in self.SKIP and self.skip_depth: self.skip_depth -= 1
+        if tag == "p" and self.current is not None:
+            text = re.sub(r"\s+", " ", " ".join(self.current["parts"])).strip()
+            if len(text) >= 25: self.paragraphs.append((text, self.current["priority"]))
+            self.current = None
+        for i in range(len(self.stack)-1, -1, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]; break
 
 def extract_text(html: str, limit=4500) -> str:
-    p = _Text(); p.feed(html)
-    txt = "\n".join(x for x in p.parts if len(x) > 25)
-    return txt[:limit]
+    """متن پاراگراف‌های مقاله را استخراج می‌کند و منو/سربرگ/پاورقی را کنار می‌گذارد."""
+    p = _Text()
+    try: p.feed(html); p.close()
+    except Exception: pass
+    if not p.paragraphs: return ""
+    preferred = [text for text, priority in p.paragraphs if priority]
+    chosen = preferred if len(preferred) >= 2 else [text for text, _ in p.paragraphs]
+    out, seen = [], set()
+    for text in chosen:
+        key = re.sub(r"\W+", "", text)
+        if key and key not in seen: seen.add(key); out.append(text)
+    return "\n".join(out)[:limit]
 
 _KW = None
 _SUFFIX = r"(?:ها|های|ی|ای|ان|ات)?"
